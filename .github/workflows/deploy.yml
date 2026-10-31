@@ -13,8 +13,12 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - run: npm install
-      - run: npm run type-check
+      - name: npm install
+        run: |
+          npm install --no-audit --no-fund > npm.log 2>&1 || { grep -iE "npm error|ERESOLVE|peer|notarget" npm.log | head -20 | sed 's/^/::error::/'; exit 1; }
+      - name: type-check
+        run: |
+          npm run type-check > tsc.log 2>&1 || { grep -E "error TS" tsc.log | head -30 | sed 's/^/::error::/'; exit 1; }
 
   deploy:
     needs: check

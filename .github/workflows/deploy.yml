@@ -34,14 +34,17 @@ jobs:
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          preCommands: npx wrangler d1 migrations apply neutra --remote
           command: deploy
           secrets: |
             GOOGLE_CLIENT_ID
             GOOGLE_CLIENT_SECRET
             COOKIE_ENCRYPTION_KEY
             ALLOWED_EMAILS
+            INVITER_REFRESH_TOKEN
         env:
           GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_CLIENT_ID }}
           GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
           COOKIE_ENCRYPTION_KEY: ${{ secrets.COOKIE_ENCRYPTION_KEY }}
           ALLOWED_EMAILS: ${{ secrets.ALLOWED_EMAILS }}
+          INVITER_REFRESH_TOKEN: ${{ secrets.INVITER_REFRESH_TOKEN }}

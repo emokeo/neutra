@@ -14,4 +14,6 @@ interface Env {
   COOKIE_ENCRYPTION_KEY: string;
   HOSTED_DOMAIN?: string;
   ALLOWED_EMAILS: string;
+  INVITER_REFRESH_TOKEN: string;
+  DB: D1Database;
 }

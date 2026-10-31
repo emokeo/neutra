@@ -19,6 +19,14 @@
       "id": "<Add-KV-ID>"
     }
   ],
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "neutra",
+      "database_id": "<Add-D1-ID>",
+      "migrations_dir": "migrations"
+    }
+  ],
   "observability": {
     "enabled": true
   },

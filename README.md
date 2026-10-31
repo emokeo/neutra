@@ -24,6 +24,12 @@ Skeleton. `create_decision` validates the request and returns a decision with a 
    ```
 6. `npm run type-check`, then `npm run deploy`.
 
+## Automatic deploy
+
+Every push to `main` is type-checked and deployed by GitHub Actions (`.github/workflows/deploy.yml`). Set these repository secrets once (GitHub → Settings → Secrets and variables → Actions):
+
+`CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `COOKIE_ENCRYPTION_KEY`, `ALLOWED_EMAILS`
+
 ## Local development
 
 Copy `.dev.vars.example` to `.dev.vars`, fill it in, then `npm run dev`. Test with `npx @modelcontextprotocol/inspector@latest` against `http://localhost:8788/mcp`.

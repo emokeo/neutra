@@ -1,21 +1,62 @@
 # Neutra
 
-A neutral place where people's AI agents make decisions together, without anyone seeing anyone else's data. v0: two people's agents find a time to meet.
+A neutral place where people's AI assistants agree on things for them, without anyone seeing anyone else's data.
 
-Runs as a remote MCP server on Cloudflare Workers, with Google sign-in. Based on Cloudflare's `remote-mcp-google-oauth` template.
+Today it does one thing: two people's assistants find a time to meet. Each assistant tells Neutra when its person is free. Neutra finds a common time and sends one calendar invite to both. Neither side ever sees the other's times.
 
-- MCP endpoint: `https://neutra.neutra-dev.workers.dev/mcp`
-- Home and privacy pages: `/` and `/privacy`
+```mermaid
+sequenceDiagram
+    participant A as Anna's assistant
+    participant N as Neutra
+    participant B as Ben's assistant
+    A->>N: Anna's free times
+    N-->>A: a message for Anna to forward to Ben
+    Note over A,B: Anna forwards it in any chat
+    B->>N: Ben's free times + the code
+    N-->>A: calendar invite
+    N-->>B: calendar invite
+```
 
-## Status
+It works across assistants: Anna can use Claude and Ben another assistant, as long as both support MCP connectors.
 
-v0 logic: five tools (`create_decision`, `create_answer`, `get_decision`, `delete_decision`, `get_answer`) backed by D1. A match sends a calendar invite from Neutra's Gmail account. Access is limited to the emails in `ALLOWED_EMAILS`. Not yet: the expiry job and the two failure emails.
+## Privacy, by design
 
-## Deploy
+- **No AI on Neutra's side.** Neutra is plain code that compares time ranges. Your times never go into an AI model of ours.
+- **Nobody sees anyone's times.** Only the matched meeting time comes back. The other person's times are never returned, and the code is stored only as a hash.
+- **Times are deleted** as soon as a decision is settled. The person answering never has their times stored at all.
+- **Retries can't map a calendar.** The person answering gets at most 3 tries, and each answer must cover at least twice the meeting length, so nobody can probe your free time slot by slot.
+- **Data stays in the EU**, in Cloudflare's EU jurisdiction.
+- **Checked by tests:** [`test/decisions.test.ts`](test/decisions.test.ts) verifies that no times or codes appear in any response.
 
-Every push to `main` is type-checked and deployed by GitHub Actions (`.github/workflows/deploy.yml`). Migrations in `migrations/` are applied before each deploy. Changes go through pull requests; the check runs on every pull request.
+Details: [privacy page](https://neutra.neutra-dev.workers.dev/privacy).
 
-## Setup (done once)
+## Try it
+
+Neutra is in private testing. To join, write to neutra.invites@gmail.com.
+
+1. In Claude: **Settings → Connectors → Add custom connector**, URL `https://neutra.neutra-dev.workers.dev/mcp`, choose **Register automatically**.
+2. Sign in with Google. Neutra uses only your name and email: to send the invite to the right address, and so that only you can answer.
+3. Ask: *"Use Neutra to find an hour with Ben next week. I'm free Tuesday and Thursday, 18:00–21:00."* Forward the message it gives you.
+
+## For agent builders
+
+A remote MCP server with Google sign-in. Resources follow [Google's AIPs](https://google.aip.dev): `decisions/{decision}` and `decisions/{decision}/answers/{answer}`.
+
+| Tool | What it does |
+| --- | --- |
+| `create_decision` | Start a decision with your person's free times and the meeting length. Returns a code and a message to forward. |
+| `create_answer` | Answer with the decision name, the code and your person's free times. A match sends the invite. |
+| `get_decision` | Status (`WAITING`, `NO_MATCH`, `INVITE_SENT`, `ACCEPTED`, `DECLINED`, `EXPIRED`) and the meeting time. |
+| `delete_decision` | Cancel a decision you started, including its invite. |
+| `get_answer` | Read your own answer. |
+
+Errors use `google.rpc` codes: `NOT_FOUND`, `PERMISSION_DENIED`, `FAILED_PRECONDITION`, `INVALID_ARGUMENT`.
+
+## Running Neutra
+
+Runs on Cloudflare Workers with D1, based on Cloudflare's `remote-mcp-google-oauth` template. Every push to `main` is type-checked, tested and deployed by GitHub Actions (`.github/workflows/deploy.yml`); migrations in `migrations/` are applied before each deploy. Changes go through pull requests.
+
+### Setup (done once)
 
 **Cloudflare**
 - Account ID and the `MCP_RESOURCE` address are in `wrangler.jsonc`.
@@ -41,6 +82,10 @@ Every push to `main` is type-checked and deployed by GitHub Actions (`.github/wo
 | `ALLOWED_EMAILS` | Comma-separated emails of the test users |
 | `INVITER_REFRESH_TOKEN` | Inviter's refresh token |
 
-## Local development
+### Local development
 
 `npm install`, copy `.dev.vars.example` to `.dev.vars` and fill it in, then `npm run dev`. Test with `npx @modelcontextprotocol/inspector@latest` against `http://localhost:8788/mcp`.
+
+## License
+
+MIT, see [LICENSE](LICENSE). Includes code from Cloudflare's MIT-licensed templates.

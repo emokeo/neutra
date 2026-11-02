@@ -25,6 +25,8 @@ type DecisionRow = {
 	state: State;
 	code_hash: string;
 	code_used: number;
+	responder_email: string | null;
+	attempts: number;
 	scheduled_start: string | null;
 	scheduled_end: string | null;
 	calendar_event_id: string | null;
@@ -47,6 +49,8 @@ const MAX_DAYS_AHEAD = 30;
 const MIN_LEAD_MS = 60 * 60 * 1000; // a matched meeting starts at least 1 hour from now
 const SLOT_MS = 15 * 60 * 1000; // matched times start on a quarter hour
 const MAX_DURATION_S = 24 * 60 * 60;
+const MAX_ANSWERS = 3; // the responder's first answer plus 2 retries after "no match"
+const MIN_BREADTH = 2; // every answer must cover at least twice the meeting duration
 
 const ALPHABET = "abcdefghijklmnopqrstuvwxyz234567";
 
@@ -86,6 +90,29 @@ function parseWindows(windows: Interval[], now: number): { start: number; end: n
 		}
 		return { start, end };
 	});
+}
+
+/** Total time covered by the windows, counting overlaps once. */
+function coverage(windows: { start: number; end: number }[]): number {
+	const sorted = [...windows].sort((a, b) => a.start - b.start);
+	let total = 0;
+	let end = -Infinity;
+	for (const w of sorted) {
+		if (w.end <= end) continue;
+		total += w.end - Math.max(w.start, end);
+		end = w.end;
+	}
+	return total;
+}
+
+// Narrow answers would let repeated tries map the other person's free times.
+function requireBreadth(windows: { start: number; end: number }[], durationSeconds: number): void {
+	if (coverage(windows) < MIN_BREADTH * durationSeconds * 1000) {
+		throw new ApiError(
+			"INVALID_ARGUMENT",
+			`The windows must cover at least ${MIN_BREADTH} times the meeting duration in total. Offer more of the times you're free.`,
+		);
+	}
 }
 
 /** The earliest common slot of the given length, or null. */
@@ -166,6 +193,7 @@ async function refresh(
 
 function view(row: DecisionRow, answers: AnswerRow[], replies: Map<string, InviteReply>, caller: Caller, code?: string) {
 	const isStarter = same(caller.email, row.starter_email);
+	const isResponder = !!row.responder_email && same(caller.email, row.responder_email);
 	const name = `decisions/${row.id}`;
 	return {
 		name,
@@ -181,6 +209,7 @@ function view(row: DecisionRow, answers: AnswerRow[], replies: Map<string, Invit
 			...(replies.size ? { inviteReply: replies.get(a.author_email.toLowerCase()) ?? "NEEDS_ACTION" } : {}),
 		})),
 		state: row.state,
+		...(isResponder && row.state === "WAITING" ? { remainingAttempts: MAX_ANSWERS - row.attempts } : {}),
 		// The code is shown only to the starter, only at creation (it is stored hashed).
 		...(isStarter && code
 			? {
@@ -202,6 +231,7 @@ export async function createDecision(
 	const now = Date.now();
 	const durationSeconds = parseDuration(request.durationSeconds);
 	const windows = parseWindows(request.starterWindows, now);
+	requireBreadth(windows, durationSeconds);
 	const lastStart = Math.max(...windows.map((w) => w.end)) - durationSeconds * 1000;
 	if (lastStart < now + MIN_LEAD_MS) {
 		throw new ApiError("INVALID_ARGUMENT", "None of the windows leaves room for the meeting at least an hour from now.");
@@ -218,6 +248,8 @@ export async function createDecision(
 		state: "WAITING",
 		code_hash: await sha256(code),
 		code_used: 0,
+		responder_email: null,
+		attempts: 0,
 		scheduled_start: null,
 		scheduled_end: null,
 		calendar_event_id: null,
@@ -282,28 +314,34 @@ export async function createAnswer(
 	if (same(row.starter_email, caller.email)) {
 		throw new ApiError("PERMISSION_DENIED", "The starter already answered when creating the decision.");
 	}
-	if (row.code_used || (await sha256(request.code.trim().toLowerCase())) !== row.code_hash) {
-		throw new ApiError("PERMISSION_DENIED", "The code is wrong or was already used.");
+	if ((await sha256(request.code.trim().toLowerCase())) !== row.code_hash) {
+		throw new ApiError("PERMISSION_DENIED", "The code is wrong.");
 	}
-	if (row.state !== "WAITING") {
+	// The code binds to the first person who answers with it.
+	if (row.responder_email && !same(row.responder_email, caller.email)) {
+		throw new ApiError("PERMISSION_DENIED", "This code is already used by someone else.");
+	}
+	if (row.state !== "WAITING" || row.code_used) {
 		throw new ApiError("FAILED_PRECONDITION", `The decision is ${row.state}, not WAITING.`);
 	}
 	const windows = parseWindows(request.windows, now);
+	requireBreadth(windows, row.duration_seconds);
 	const starter = (await answersOf(env, id)).find((a) => a.role === "STARTER");
 	if (!starter) throw new ApiError("FAILED_PRECONDITION", "The decision has no starter answer.");
 
+	const attempts = row.attempts + 1;
 	const answer: AnswerRow = {
 		id: randomId(26),
 		decision_id: id,
 		author_email: caller.email,
 		author_name: caller.name,
 		role: "RESPONDER",
-		windows_json: JSON.stringify(windows),
+		windows_json: "[]", // the responder's times are never kept
 		create_time: iso(now),
 	};
 	const match = findMatch(JSON.parse(starter.windows_json), windows, row.duration_seconds * 1000, now);
 
-	let next: DecisionRow = { ...row, code_used: 1, update_time: iso(now) };
+	let next: DecisionRow = { ...row, responder_email: caller.email, attempts, update_time: iso(now) };
 	if (match) {
 		const eventId = await createEvent(env, {
 			summary: `${row.starter_name} & ${caller.name}`,
@@ -314,23 +352,36 @@ export async function createAnswer(
 		next = {
 			...next,
 			state: "INVITE_SENT",
+			code_used: 1,
 			scheduled_start: iso(match.start),
 			scheduled_end: iso(match.end),
 			calendar_event_id: eventId,
 		};
-	} else {
-		next = { ...next, state: "NO_MATCH" };
+	} else if (attempts >= MAX_ANSWERS) {
+		next = { ...next, state: "NO_MATCH", code_used: 1 };
 	}
+	const settled = next.state !== "WAITING";
 
-	// The decision is settled either way: nobody's windows are kept.
 	await env.DB.batch([
+		env.DB.prepare("DELETE FROM answers WHERE decision_id = ? AND role = 'RESPONDER'").bind(id),
 		env.DB.prepare(
 			"INSERT INTO answers (id, decision_id, author_email, author_name, role, windows_json, create_time) VALUES (?, ?, ?, ?, ?, '[]', ?)",
 		).bind(answer.id, id, answer.author_email, answer.author_name, answer.role, answer.create_time),
-		env.DB.prepare("UPDATE answers SET windows_json = '[]' WHERE decision_id = ?").bind(id),
+		// Once settled, the starter's times go too.
+		...(settled ? [env.DB.prepare("UPDATE answers SET windows_json = '[]' WHERE decision_id = ?").bind(id)] : []),
 		env.DB.prepare(
-			"UPDATE decisions SET state = ?, code_used = 1, scheduled_start = ?, scheduled_end = ?, calendar_event_id = ?, update_time = ? WHERE id = ?",
-		).bind(next.state, next.scheduled_start, next.scheduled_end, next.calendar_event_id, next.update_time, id),
+			"UPDATE decisions SET state = ?, code_used = ?, responder_email = ?, attempts = ?, scheduled_start = ?, scheduled_end = ?, calendar_event_id = ?, update_time = ? WHERE id = ?",
+		).bind(
+			next.state,
+			next.code_used,
+			next.responder_email,
+			next.attempts,
+			next.scheduled_start,
+			next.scheduled_end,
+			next.calendar_event_id,
+			next.update_time,
+			id,
+		),
 	]);
 
 	return {

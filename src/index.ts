@@ -89,7 +89,7 @@ function createServer() {
 		"create_answer",
 		{
 			description:
-				"Answer a decision someone started, using the decision name and code they sent. Send your person's available windows. If both people share a time, a calendar invite goes to both right away.",
+				"Answer a decision someone started, using the decision name and code they sent. Send your person's available windows; together they must cover at least twice the meeting duration. If both people share a time, a calendar invite goes to both right away. If not, the decision stays WAITING and remainingAttempts says how many more answers you may send, so ask your person for wider times. After the last one it ends as NO_MATCH.",
 			inputSchema: z.object({
 				parent: DecisionName,
 				code: z.string().describe("The code from the message the other person forwarded"),

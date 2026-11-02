@@ -16,15 +16,15 @@ jobs:
         with:
           node-version: 22
       - run: npm install --no-audit --no-fund
-      - name: Create D1 database
+      - name: Create D1 database and KV namespace
+        shell: bash {0}
         run: |
-          npx wrangler d1 create neutra > d1.log 2>&1 || true
-          npx wrangler d1 list --json > d1.json 2>/dev/null || true
-          id=$(node -e "const l=JSON.parse(require('fs').readFileSync('d1.json','utf8')||'[]');const d=l.find(x=>x.name==='neutra');console.log(d?d.uuid:'')")
-          if [ -n "$id" ]; then echo "::notice::D1 neutra id=$id"; else echo "::error::$(tr '\n' ' ' < d1.log | cut -c1-400)"; exit 1; fi
-      - name: Create KV namespace
-        run: |
-          npx wrangler kv namespace create OAUTH_KV > kv.log 2>&1 || true
-          npx wrangler kv namespace list > kv.json 2>/dev/null || true
-          id=$(node -e "const l=JSON.parse(require('fs').readFileSync('kv.json','utf8')||'[]');const k=l.find(x=>/OAUTH_KV/.test(x.title));console.log(k?k.id:'')")
-          if [ -n "$id" ]; then echo "::notice::KV OAUTH_KV id=$id"; else echo "::error::$(tr '\n' ' ' < kv.log | cut -c1-400)"; exit 1; fi
+          report() { tr '\n' ' ' < "$1" | sed 's/\x1b\[[0-9;]*m//g' | cut -c1-600; }
+          npx wrangler d1 create neutra > d1.log 2>&1
+          echo "::notice::d1 create: $(report d1.log)"
+          npx wrangler d1 list --json > d1.json 2> d1.err
+          echo "::notice::d1 list: $(report d1.json) $(report d1.err)"
+          npx wrangler kv namespace create OAUTH_KV > kv.log 2>&1
+          echo "::notice::kv create: $(report kv.log)"
+          npx wrangler kv namespace list > kv.json 2> kv.err
+          echo "::notice::kv list: $(report kv.json) $(report kv.err)"

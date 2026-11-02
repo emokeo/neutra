@@ -52,16 +52,22 @@ export function privacyPage(): Response {
 	return page(
 		"Neutra · Privacy",
 		`<h1>Privacy</h1>
-<p>Neutra is an early project in private testing. This page says plainly what it stores and why. Last updated: 2 November 2026.</p>
+<p>Neutra is an early project in private testing. This page says plainly what it stores and why. Last updated: 3 November 2026.</p>
 
 <h2>When you sign in</h2>
 <p>We receive your name and email address from Google. Nothing else: we don't access your calendar, contacts or mail.</p>
 
 <h2>Your available times</h2>
-<p>Your assistant sends the times you're free for one decision. They are never shown to anyone else. They are deleted as soon as the decision is matched or has no match. If nobody answers, they are deleted when the decision expires, at most 30 days later.</p>
+<p>Your assistant sends the times you're free for one decision. They are never shown to anyone else. The times of the person answering are never stored at all. The starter's times are deleted as soon as the decision is matched or ends, at most 30 days after it started.</p>
 
 <h2>Decisions</h2>
-<p>For each decision we keep the participants' names and email addresses, its state and, if one was found, the meeting time. The person who started a decision can delete it at any time, which also cancels the invite.</p>
+<p>For each decision we keep the participants' names and email addresses, its state and, if one was found, the meeting time. <strong>Everything about a decision is deleted 7 days after its meeting ends</strong>, or 7 days after it ended without a meeting. The person who started a decision can delete it earlier at any time, which also cancels the invite.</p>
+
+<h2>Emails</h2>
+<p>If nobody answers in time, or no common time is found, the person who started the decision gets one short email from neutra.invites@gmail.com saying so.</p>
+
+<h2>Usage statistics</h2>
+<p>To learn whether Neutra is useful, we count what happens: for example "a decision was started from Claude" or "an answer matched on the second try". These records contain no names, email addresses or times, only a random reference per decision and a pseudonymous ID per person, so we can count distinct people. They are kept after the decision itself is deleted.</p>
 
 <h2>Calendar invites</h2>
 <p>A matched meeting is sent as a Google Calendar invite from ${CONTACT} to both people. Like any invite, it shows both email addresses.</p>

@@ -5,6 +5,7 @@ export type FakeEvent = { summary: string; start: string; end: string; attendees
 
 export function fakeGoogle() {
 	const events = new Map<string, FakeEvent>();
+	const emails: { raw: string }[] = [];
 	let next = 1;
 	const fetch = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
 		const url = new URL(typeof input === "string" ? input : input instanceof URL ? input.href : input.url);
@@ -13,6 +14,11 @@ export function fakeGoogle() {
 			new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
 
 		if (url.hostname === "oauth2.googleapis.com") return json({ access_token: "fake-token" });
+		if (url.hostname === "gmail.googleapis.com") {
+			const { raw } = JSON.parse(String(init?.body));
+			emails.push({ raw: Buffer.from(raw.replace(/-/g, "+").replace(/_/g, "/"), "base64").toString("utf8") });
+			return json({ id: `msg${emails.length}` });
+		}
 
 		const match = /\/calendar\/v3\/calendars\/primary\/events(?:\/([^/?]+))?/.exec(url.pathname);
 		if (!match) return json({ error: "unexpected URL" }, 500);
@@ -45,5 +51,5 @@ export function fakeGoogle() {
 		if (attendee) attendee.responseStatus = responseStatus;
 	}
 
-	return { fetch, events, reply };
+	return { fetch, events, emails, reply };
 }

@@ -1,4 +1,4 @@
-// Calendar invites, sent from Neutra's own Google account (the "inviter").
+// Calendar invites and short notice emails, sent from Neutra's own Google account (the "inviter").
 // The inviter's refresh token is a secret; users' calendars are never accessed.
 
 const CALENDAR = "https://www.googleapis.com/calendar/v3/calendars/primary/events";
@@ -82,5 +82,26 @@ export async function deleteEvent(env: Env, eventId: string): Promise<void> {
 	});
 	if (!response.ok && response.status !== 404 && response.status !== 410) {
 		throw new Error(`Cancelling the calendar event failed: ${response.status}`);
+	}
+}
+
+function base64Url(text: string): string {
+	const bytes = new TextEncoder().encode(text);
+	let binary = "";
+	for (const b of bytes) binary += String.fromCharCode(b);
+	return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+/** Sends a plain-text email from the inviter account (needs the gmail.send scope). */
+export async function sendEmail(env: Env, email: { to: string; subject: string; body: string }): Promise<void> {
+	const subject = `=?UTF-8?B?${btoa(String.fromCharCode(...new TextEncoder().encode(email.subject)))}?=`;
+	const raw = [`To: ${email.to}`, `Subject: ${subject}`, "Content-Type: text/plain; charset=UTF-8", "", email.body].join("\r\n");
+	const response = await fetch("https://gmail.googleapis.com/gmail/v1/users/me/messages/send", {
+		method: "POST",
+		headers: { Authorization: `Bearer ${await accessToken(env)}`, "Content-Type": "application/json" },
+		body: JSON.stringify({ raw: base64Url(raw) }),
+	});
+	if (!response.ok) {
+		throw new Error(`Sending the email failed: ${response.status}`);
 	}
 }

@@ -12,13 +12,17 @@ import {
 	getAnswer,
 	getDecision,
 } from "./decisions";
+import { recordEvent } from "./events";
 import { GoogleHandler } from "./google-handler";
 import { nextStep, SERVER_INSTRUCTIONS } from "./guidance";
+import { runMaintenance } from "./maintenance";
 
 // Who the caller is, from Google sign-in. Encrypted inside the auth token.
 export type Props = {
 	name: string;
 	email: string;
+	// The assistant's registered name, e.g. "Claude", recorded at sign-in.
+	client?: string;
 };
 
 // google.type.Interval, as JSON.
@@ -59,7 +63,9 @@ async function run(tool: string, caller: Caller | undefined, action: (caller: Ca
 		console.log(JSON.stringify({ tool, outcome: "ok" }));
 		return ok(result);
 	} catch (error) {
-		console.log(JSON.stringify({ tool, outcome: error instanceof ApiError ? error.code : "INTERNAL" }));
+		const code = error instanceof ApiError ? error.code : "INTERNAL";
+		console.log(JSON.stringify({ tool, outcome: code }));
+		await recordEvent(env, { type: "request_failed", client: caller.client, email: caller.email, detail: { tool, code } });
 		return fail(error);
 	}
 }
@@ -67,7 +73,7 @@ async function run(tool: string, caller: Caller | undefined, action: (caller: Ca
 function createServer() {
 	const server = new McpServer({ name: "Neutra", version: "0.2.0" }, { instructions: SERVER_INSTRUCTIONS });
 	const props = getMcpAuthContext()?.props as Props | undefined;
-	const caller = props ? { email: props.email, name: props.name } : undefined;
+	const caller = props ? { email: props.email, name: props.name, client: props.client } : undefined;
 
 	server.registerTool(
 		"create_decision",
@@ -219,7 +225,7 @@ function createServer() {
 
 const mcpHandler = createMcpHandler(createServer);
 
-export default new OAuthProvider<Env>({
+const provider = new OAuthProvider<Env>({
 	apiHandler: {
 		fetch(request: Request, env: Env, ctx: ExecutionContext) {
 			return mcpHandler(request, env, ctx);
@@ -233,3 +239,11 @@ export default new OAuthProvider<Env>({
 	// The URL MCP clients connect to. Every token is bound to it.
 	resourceMetadata: { resource: env.MCP_RESOURCE },
 });
+
+export default {
+	fetch: (request: Request, env: Env, ctx: ExecutionContext) => provider.fetch(request, env, ctx),
+	// Every 15 minutes (see wrangler.jsonc): expiry, the failure emails, and deleting old data.
+	scheduled: (_controller: ScheduledController, env: Env, ctx: ExecutionContext) => {
+		ctx.waitUntil(runMaintenance(env));
+	},
+};

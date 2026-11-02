@@ -101,6 +101,7 @@ export async function fetchUpstreamAuthToken({
 export type Props = {
 	name: string;
 	email: string;
+	client?: string;
 };
 
 /** True when the email is on the comma-separated allowlist (case-insensitive). */

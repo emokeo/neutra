@@ -36,6 +36,7 @@ beforeEach(() => {
 		GOOGLE_CLIENT_SECRET: "secret",
 		INVITER_REFRESH_TOKEN: "refresh",
 		MCP_RESOURCE: "https://neutra.example.dev/mcp",
+		COOKIE_ENCRYPTION_KEY: "test-key",
 	} as unknown as Env;
 });
 

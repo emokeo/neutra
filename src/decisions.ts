@@ -60,7 +60,7 @@ const MIN_LEAD_MS = 60 * 60 * 1000; // a matched meeting starts at least 1 hour 
 const SLOT_MS = 15 * 60 * 1000; // matched times start on a quarter hour
 const MAX_DURATION_S = 24 * 60 * 60;
 const MIN_DURATION_S = 15 * 60;
-const MAX_ANSWERS = 3; // the responder's first answer plus 2 retries after "no match"
+export const MAX_ANSWERS = 3; // the responder's first answer plus 2 retries after "no match"
 const MIN_BREADTH = 2; // every answer must cover at least twice the meeting duration
 
 const ALPHABET = "abcdefghijklmnopqrstuvwxyz234567";
@@ -278,7 +278,7 @@ function view(
 			...(replies.size ? { inviteReply: replies.get(a.author_email.toLowerCase()) ?? "NEEDS_ACTION" } : {}),
 		})),
 		state: (row.state === "MATCHING" ? "WAITING" : row.state) as State,
-		...(isResponder && row.state === "WAITING" ? { remainingAttempts: MAX_ANSWERS - row.attempts } : {}),
+		...(isResponder && (row.state === "WAITING" || row.state === "MATCHING") ? { remainingAttempts: MAX_ANSWERS - row.attempts } : {}),
 		// The code is shown only to the starter, only at creation (it is stored hashed).
 		...(isStarter && code
 			? {
@@ -411,6 +411,16 @@ export async function deleteDecision(env: Env, caller: Caller, name: string): Pr
 	if (row.calendar_event_id) {
 		await deleteEvent(env, row.calendar_event_id);
 	}
+	// Guarded too: an answer may have claimed the decision since it was read.
+	const deleted = await env.DB.batch([
+		env.DB.prepare(
+			"DELETE FROM answers WHERE decision_id = ? AND EXISTS (SELECT 1 FROM decisions WHERE id = ? AND state != 'MATCHING')",
+		).bind(row.id, row.id),
+		env.DB.prepare("DELETE FROM decisions WHERE id = ? AND state != 'MATCHING'").bind(row.id),
+	]);
+	if (deleted[1].meta.changes !== 1) {
+		throw new ApiError("FAILED_PRECONDITION", "An answer to this decision is being processed. Try again in a moment.");
+	}
 	await recordEvent(env, {
 		type: "decision_deleted",
 		decisionRef: row.stats_ref,
@@ -418,10 +428,6 @@ export async function deleteDecision(env: Env, caller: Caller, name: string): Pr
 		email: caller.email,
 		detail: { stateBefore: row.state },
 	});
-	await env.DB.batch([
-		env.DB.prepare("DELETE FROM answers WHERE decision_id = ?").bind(row.id),
-		env.DB.prepare("DELETE FROM decisions WHERE id = ?").bind(row.id),
-	]);
 }
 
 export async function createAnswer(
@@ -479,7 +485,7 @@ export async function createAnswer(
 	// Every later write checks the claim, so a stale call can't overwrite a newer state.
 	const claimed = await env.DB.batch([
 		env.DB.prepare(
-			"UPDATE decisions SET state = ?, code_used = ?, claim_id = ?, pending_event_id = ?, responder_email = ?, attempts = attempts + 1, scheduled_start = ?, scheduled_end = ?, update_time = ? WHERE id = ? AND state = 'WAITING' AND code_used = 0 AND attempts = ?",
+			"UPDATE decisions SET state = ?, code_used = ?, claim_id = ?, pending_event_id = ?, responder_email = ?, attempts = attempts + 1, scheduled_start = ?, scheduled_end = ?, update_time = ? WHERE id = ? AND state = 'WAITING' AND code_used = 0 AND attempts = ? AND (responder_email IS NULL OR lower(responder_email) = lower(?))",
 		).bind(
 			firstState,
 			firstState === "NO_MATCH" ? 1 : 0,
@@ -491,6 +497,7 @@ export async function createAnswer(
 			iso(now),
 			id,
 			row.attempts,
+			caller.email,
 		),
 		env.DB.prepare(`DELETE FROM answers WHERE decision_id = ? AND role = 'RESPONDER' AND ${owned}`).bind(id, id, claimId),
 		env.DB.prepare(
@@ -515,14 +522,13 @@ export async function createAnswer(
 		update_time: iso(now),
 	};
 	if (match && eventId) {
-		// Gives the try back only when Google confirms no invite went out.
-		const release = () =>
-			env.DB.prepare(
-				"UPDATE decisions SET state = 'WAITING', attempts = attempts - 1, claim_id = NULL, pending_event_id = NULL, scheduled_start = NULL, scheduled_end = NULL WHERE id = ? AND claim_id = ?",
-			)
-				.bind(id, claimId)
-				.run();
-		const failed = new ApiError("FAILED_PRECONDITION", "Neutra couldn't send the invite. Try again in a moment.");
+		// A claimed try always counts, even if the invite fails: giving it back would let repeated
+		// failures reveal which times match for free. Anything unclear is left in MATCHING for the
+		// maintenance job, which finishes the answer if the invite exists and otherwise opens the request again.
+		const failed = new ApiError(
+			"FAILED_PRECONDITION",
+			"Neutra couldn't confirm the invite. Check get_decision in about 20 minutes: either the invite went out, or the request is open for another try.",
+		);
 
 		try {
 			await createEvent(env, {
@@ -534,13 +540,8 @@ export async function createAnswer(
 			});
 		} catch (error) {
 			console.error("invite failed", id, error);
-			// The request may have reached Google anyway. If unsure, the maintenance job finishes it.
-			const created = await eventExists(env, eventId).catch(() => null);
-			if (created === false) {
-				await release();
-				throw failed;
-			}
-			if (created === null) throw failed;
+			// The request may have reached Google anyway. Only a confirmed invite is finished here.
+			if ((await eventExists(env, eventId).catch(() => false)) !== true) throw failed;
 		}
 
 		let finished = false;
@@ -553,16 +554,15 @@ export async function createAnswer(
 			]);
 			finished = result[1].meta.changes === 1;
 		} catch (error) {
+			// It may have been saved anyway; if not, the job finishes it (the invite exists).
 			console.error("saving the answer failed", id, error);
-			// Don't leave an invite Neutra doesn't know about. If the cancel fails too, the maintenance job finishes the answer.
-			if (await deleteEvent(env, eventId).then(() => true, () => false)) await release();
-			throw failed;
 		}
 		if (!finished) {
-			// The maintenance job took over a slow answer. It may have finished it with this invite.
 			const current = await load(env, id).catch(() => null);
+			if (current?.state === "MATCHING" && current.claim_id === claimId) throw failed;
 			if (current?.calendar_event_id !== eventId) {
-				await deleteEvent(env, eventId).catch(() => {});
+				// The job took over this slow answer before the invite existed. Take the invite back.
+				await deleteEvent(env, eventId).catch((error) => console.error("untracked invite", id, eventId, error));
 				throw failed;
 			}
 		}

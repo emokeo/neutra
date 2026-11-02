@@ -145,14 +145,24 @@ describe("answers that stopped mid-way", () => {
 		expect(windows.every((w) => w.windows_json === "[]")).toBe(true);
 	});
 
-	it("resets an answer whose invite never went out", async () => {
+	it("opens the request again when the invite never went out, with the try counted", async () => {
+		const decision = await start();
+		google.failures.create = "before";
+		await createAnswer(env, ben, { parent: decision.name, code: decision.code!, windows: benFree }).catch(() => {});
+		expect(await runMaintenance(env, at("2026-11-03T08:10:00Z"))).toMatchObject({ recovered: 1 });
+		const { decision: after } = await createAnswer(env, ben, { parent: decision.name, code: decision.code!, windows: benBusyThen });
+		expect(after.remainingAttempts).toBe(1);
+	});
+
+	it("ends the decision when the last try's invite never went out", async () => {
 		const decision = await start();
 		db.db
-			.prepare("UPDATE decisions SET state = 'MATCHING', attempts = 1, claim_id = 'c1', pending_event_id = 'neverbeensent', responder_email = ?, update_time = ?")
+			.prepare("UPDATE decisions SET state = 'MATCHING', attempts = 3, claim_id = 'c1', pending_event_id = 'neverbeensent', responder_email = ?, update_time = ?")
 			.run(ben.email, "2026-11-03T08:00:00.000Z");
 		await runMaintenance(env, at("2026-11-03T08:10:00Z"));
-		const { decision: after } = await createAnswer(env, ben, { parent: decision.name, code: decision.code!, windows: benBusyThen });
-		expect(after.remainingAttempts).toBe(2);
+		expect((await getDecision(env, anna, decision.name)).state).toBe("NO_MATCH");
+		const windows = db.db.prepare("SELECT windows_json FROM answers").all() as { windows_json: string }[];
+		expect(windows.every((w) => w.windows_json === "[]")).toBe(true);
 	});
 
 	it("waits when Google can't say whether the invite went out", async () => {

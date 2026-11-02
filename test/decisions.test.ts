@@ -323,15 +323,17 @@ describe("get_decision", () => {
 });
 
 describe("when Google or the database fails", () => {
-	it("gives the try back when the invite surely didn't go out", async () => {
+	it("counts the try when the invite fails, and shows no time", async () => {
 		const decision = await start();
 		google.failures.create = "before";
 		await rejects(createAnswer(env, ben, { parent: decision.name, code: decision.code!, windows: benFree }), "FAILED_PRECONDITION");
 		const read = await getDecision(env, anna, decision.name);
 		expect(read.state).toBe("WAITING");
 		expect(read.meeting).not.toHaveProperty("scheduledTime");
-		const { decision: after } = await createAnswer(env, ben, { parent: decision.name, code: decision.code!, windows: benBusyThen });
-		expect(after.remainingAttempts).toBe(2);
+		// Left for the maintenance job, so another try waits until it has decided.
+		await rejects(createAnswer(env, ben, { parent: decision.name, code: decision.code!, windows: benBusyThen }), "FAILED_PRECONDITION");
+		expect((await getDecision(env, ben, decision.name)).remainingAttempts).toBe(2);
+		expect(google.events.size).toBe(0);
 	});
 
 	it("keeps the answer when Google created the invite but reported an error", async () => {

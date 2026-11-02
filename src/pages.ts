@@ -42,7 +42,7 @@ export function homePage(): Response {
 </ul>
 
 <h2>Start one yourself</h2>
-<p>Ask your assistant: <em>"Use Neutra to find an hour with Andrei next week. I'm free Tuesday and Thursday, 18:00–21:00."</em> It gives you a message to forward.</p>
+<p>Ask your assistant: <em>"Use Neutra to find an hour with Ben next week. I'm free Tuesday and Thursday, 18:00–21:00."</em> It gives you a message to forward.</p>
 
 <p><a href="/privacy">Privacy</a> · Contact: <a href="mailto:${CONTACT}">${CONTACT}</a></p>`,
 	);

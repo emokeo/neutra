@@ -15,3 +15,6 @@ CREATE TABLE events (
 );
 
 CREATE INDEX events_by_time ON events(create_time);
+
+-- Decisions that ended before this update get no surprise email.
+UPDATE decisions SET notified = 1 WHERE state IN ('NO_MATCH', 'EXPIRED');

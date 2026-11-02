@@ -63,7 +63,24 @@ export async function runMaintenance(env: Env, now = Date.now()) {
 		result.expired++;
 	}
 
-	// 2. One email to the starter when nothing worked out.
+	// 2. Delete everything about decisions that ended more than RETENTION_DAYS ago.
+	const cutoff = new Date(now - RETENTION_DAYS * 24 * 60 * 60 * 1000).toISOString();
+	const { results: old } = await env.DB.prepare(
+		`SELECT id FROM decisions
+		 WHERE (state IN ('INVITE_SENT', 'ACCEPTED', 'DECLINED') AND scheduled_end < ?)
+		    OR (state IN ('NO_MATCH', 'EXPIRED') AND update_time < ?)`,
+	)
+		.bind(cutoff, cutoff)
+		.all<{ id: string }>();
+	for (const d of old) {
+		await env.DB.batch([
+			env.DB.prepare("DELETE FROM answers WHERE decision_id = ?").bind(d.id),
+			env.DB.prepare("DELETE FROM decisions WHERE id = ?").bind(d.id),
+		]);
+		result.deleted++;
+	}
+
+	// 3. One email to the starter when nothing worked out.
 	const { results: unnotified } = await env.DB.prepare(
 		"SELECT id, stats_ref, starter_email, starter_name, responder_email, expire_time FROM decisions WHERE state IN ('NO_MATCH', 'EXPIRED') AND notified = 0",
 	).all<Row>();
@@ -88,23 +105,6 @@ export async function runMaintenance(env: Env, now = Date.now()) {
 			// Left unmarked, so the next run tries again.
 			console.error("notify failed", d.id, error);
 		}
-	}
-
-	// 3. Delete everything about decisions that ended more than RETENTION_DAYS ago.
-	const cutoff = new Date(now - RETENTION_DAYS * 24 * 60 * 60 * 1000).toISOString();
-	const { results: old } = await env.DB.prepare(
-		`SELECT id FROM decisions
-		 WHERE (state IN ('INVITE_SENT', 'ACCEPTED', 'DECLINED') AND scheduled_end < ?)
-		    OR (state IN ('NO_MATCH', 'EXPIRED') AND update_time < ?)`,
-	)
-		.bind(cutoff, cutoff)
-		.all<{ id: string }>();
-	for (const d of old) {
-		await env.DB.batch([
-			env.DB.prepare("DELETE FROM answers WHERE decision_id = ?").bind(d.id),
-			env.DB.prepare("DELETE FROM decisions WHERE id = ?").bind(d.id),
-		]);
-		result.deleted++;
 	}
 
 	console.log(JSON.stringify({ job: "maintenance", ...result }));

@@ -94,10 +94,10 @@ export async function runMaintenance(env: Env, now = Date.now()) {
 	const cutoff = new Date(now - RETENTION_DAYS * 24 * 60 * 60 * 1000).toISOString();
 	const { results: old } = await env.DB.prepare(
 		`SELECT id FROM decisions
-		 WHERE (state IN ('INVITE_SENT', 'ACCEPTED', 'DECLINED') AND scheduled_end < ?1)
-		    OR (state IN ('NO_MATCH', 'EXPIRED') AND update_time < ?1)`,
+		 WHERE (state IN ('INVITE_SENT', 'ACCEPTED', 'DECLINED') AND scheduled_end < ?)
+		    OR (state IN ('NO_MATCH', 'EXPIRED') AND update_time < ?)`,
 	)
-		.bind(cutoff)
+		.bind(cutoff, cutoff)
 		.all<{ id: string }>();
 	for (const d of old) {
 		await env.DB.batch([

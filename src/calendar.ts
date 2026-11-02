@@ -28,17 +28,35 @@ async function accessToken(env: Env): Promise<string> {
 	return access_token;
 }
 
+/** A Google API call with the inviter's token; on 401 the cached token is dropped and the call retried once. */
+async function google(env: Env, url: string, init: RequestInit = {}): Promise<Response> {
+	const call = async () =>
+		fetch(url, { ...init, headers: { ...(init.headers ?? {}), Authorization: `Bearer ${await accessToken(env)}` } });
+	let response = await call();
+	if (response.status === 401) {
+		cachedToken = null;
+		response = await call();
+	}
+	return response;
+}
+
+const BASE32HEX = "0123456789abcdefghijklmnopqrstuv";
+
+/** An event ID Neutra chooses itself (Google accepts base32hex IDs), so a half-finished answer can be traced. */
+export function newEventId(): string {
+	return Array.from(crypto.getRandomValues(new Uint8Array(26)), (b) => BASE32HEX[b % 32]).join("");
+}
+
+/** Creates the event under the given ID. If it already exists (a retried call), that counts as done. */
 export async function createEvent(
 	env: Env,
-	event: { summary: string; start: string; end: string; attendees: string[] },
+	event: { id: string; summary: string; start: string; end: string; attendees: string[] },
 ): Promise<string> {
-	const response = await fetch(`${CALENDAR}?sendUpdates=all`, {
+	const response = await google(env, `${CALENDAR}?sendUpdates=all`, {
 		method: "POST",
-		headers: {
-			Authorization: `Bearer ${await accessToken(env)}`,
-			"Content-Type": "application/json",
-		},
+		headers: { "Content-Type": "application/json" },
 		body: JSON.stringify({
+			id: event.id,
 			summary: event.summary,
 			description: "Arranged by Neutra.",
 			start: { dateTime: event.start },
@@ -46,18 +64,24 @@ export async function createEvent(
 			attendees: event.attendees.map((email) => ({ email })),
 		}),
 	});
-	if (!response.ok) {
+	if (!response.ok && response.status !== 409) {
 		throw new Error(`Creating the calendar event failed: ${response.status}`);
 	}
-	const { id } = (await response.json()) as { id: string };
-	return id;
+	return event.id;
+}
+
+/** Whether the event exists (and isn't cancelled). */
+export async function eventExists(env: Env, eventId: string): Promise<boolean> {
+	const response = await google(env, `${CALENDAR}/${encodeURIComponent(eventId)}`);
+	if (response.status === 404 || response.status === 410) return false;
+	if (!response.ok) throw new Error(`Reading the calendar event failed: ${response.status}`);
+	const { status } = (await response.json()) as { status?: string };
+	return status !== "cancelled";
 }
 
 /** Each attendee's reply, keyed by lowercase email. */
 export async function getReplies(env: Env, eventId: string): Promise<Map<string, InviteReply>> {
-	const response = await fetch(`${CALENDAR}/${encodeURIComponent(eventId)}`, {
-		headers: { Authorization: `Bearer ${await accessToken(env)}` },
-	});
+	const response = await google(env, `${CALENDAR}/${encodeURIComponent(eventId)}`);
 	if (!response.ok) {
 		throw new Error(`Reading the calendar event failed: ${response.status}`);
 	}
@@ -81,9 +105,8 @@ export async function getReplies(env: Env, eventId: string): Promise<Map<string,
 
 /** Removes the event. With notify, Google sends both people a cancellation; without, it's quiet cleanup. */
 export async function deleteEvent(env: Env, eventId: string, notify = true): Promise<void> {
-	const response = await fetch(`${CALENDAR}/${encodeURIComponent(eventId)}?sendUpdates=${notify ? "all" : "none"}`, {
+	const response = await google(env, `${CALENDAR}/${encodeURIComponent(eventId)}?sendUpdates=${notify ? "all" : "none"}`, {
 		method: "DELETE",
-		headers: { Authorization: `Bearer ${await accessToken(env)}` },
 	});
 	if (!response.ok && response.status !== 404 && response.status !== 410) {
 		throw new Error(`Cancelling the calendar event failed: ${response.status}`);
@@ -101,9 +124,9 @@ function base64Url(text: string): string {
 export async function sendEmail(env: Env, email: { to: string; subject: string; body: string }): Promise<void> {
 	const subject = `=?UTF-8?B?${btoa(String.fromCharCode(...new TextEncoder().encode(email.subject)))}?=`;
 	const raw = [`To: ${email.to}`, `Subject: ${subject}`, "Content-Type: text/plain; charset=UTF-8", "", email.body].join("\r\n");
-	const response = await fetch("https://gmail.googleapis.com/gmail/v1/users/me/messages/send", {
+	const response = await google(env, "https://gmail.googleapis.com/gmail/v1/users/me/messages/send", {
 		method: "POST",
-		headers: { Authorization: `Bearer ${await accessToken(env)}`, "Content-Type": "application/json" },
+		headers: { "Content-Type": "application/json" },
 		body: JSON.stringify({ raw: base64Url(raw) }),
 	});
 	if (!response.ok) {

@@ -1,5 +1,5 @@
 // Decisions and answers: storage, matching and the rules from the v0 API.
-import { createEvent, deleteEvent, getReplies, type InviteReply } from "./calendar";
+import { createEvent, deleteEvent, eventExists, getReplies, newEventId, type InviteReply } from "./calendar";
 import { recordEvent } from "./events";
 import { checkCreateAnswer, checkCreateDecision } from "./limits";
 import { formatDay, formatRange, isValidTimeZone, parseTimestamp } from "./time";
@@ -37,6 +37,8 @@ type DecisionRow = {
 	scheduled_start: string | null;
 	scheduled_end: string | null;
 	calendar_event_id: string | null;
+	claim_id: string | null;
+	pending_event_id: string | null;
 	expire_time: string;
 	create_time: string;
 	update_time: string;
@@ -244,6 +246,8 @@ async function refresh(
 	return { row, replies };
 }
 
+const INVITED: StoredState[] = ["INVITE_SENT", "ACCEPTED", "DECLINED"];
+
 function view(
 	row: DecisionRow,
 	answers: AnswerRow[],
@@ -260,7 +264,7 @@ function view(
 		name,
 		meeting: {
 			duration: `${row.duration_seconds}s`,
-			...(row.scheduled_start && row.scheduled_end
+			...(row.scheduled_start && row.scheduled_end && INVITED.includes(row.state)
 				? {
 						scheduledTime: { startTime: row.scheduled_start, endTime: row.scheduled_end },
 						// The meeting time in the caller's own time zone, ready to show.
@@ -322,6 +326,8 @@ export async function createDecision(
 		scheduled_start: null,
 		scheduled_end: null,
 		calendar_event_id: null,
+		claim_id: null,
+		pending_event_id: null,
 		expire_time: iso(expire),
 		create_time: iso(now),
 		update_time: iso(now),
@@ -398,6 +404,10 @@ export async function deleteDecision(env: Env, caller: Caller, name: string): Pr
 	if (!same(row.starter_email, caller.email)) {
 		throw new ApiError("PERMISSION_DENIED", "Only the person who started the decision can delete it.");
 	}
+	if (row.state === "MATCHING") {
+		// An invite may be on its way; deleting now could leave it behind.
+		throw new ApiError("FAILED_PRECONDITION", "An answer to this decision is being processed. Try again in a moment.");
+	}
 	if (row.calendar_event_id) {
 		await deleteEvent(env, row.calendar_event_id);
 	}
@@ -433,31 +443,18 @@ export async function createAnswer(
 	if (loaded.responder_email && !same(loaded.responder_email, caller.email)) {
 		throw new ApiError("PERMISSION_DENIED", "This code is already used by someone else.");
 	}
+	const windows = parseWindows(request.windows, now, request.timeZone);
+	requireBreadth(windows, loaded.duration_seconds, now);
 	const { row } = await refresh(env, loaded, now);
 	if (row.state === "MATCHING") {
 		throw new ApiError("FAILED_PRECONDITION", "Another answer to this decision is being processed. Try again in a moment.");
 	}
-	if (row.state !== "WAITING" || row.code_used) {
+	if (row.state !== "WAITING" || row.code_used || row.attempts >= MAX_ANSWERS) {
 		throw new ApiError("FAILED_PRECONDITION", `The decision is ${row.state}, not WAITING.`);
 	}
-	const windows = parseWindows(request.windows, now, request.timeZone);
-	requireBreadth(windows, row.duration_seconds, now);
 	await checkCreateAnswer(env, caller.email, row.starter_email, id, now);
 	const starter = (await answersOf(env, id)).find((a) => a.role === "STARTER");
 	if (!starter) throw new ApiError("FAILED_PRECONDITION", "The decision has no starter answer.");
-
-	// Claim the decision for this answer. Only one answer at a time gets past this,
-	// so parallel calls can't send two invites or get around the try limit.
-	const claim = await env.DB.prepare(
-		"UPDATE decisions SET state = 'MATCHING', responder_email = ?, attempts = attempts + 1, update_time = ? WHERE id = ? AND state = 'WAITING' AND code_used = 0 AND attempts = ?",
-	)
-		.bind(caller.email, iso(now), id, row.attempts)
-		.run();
-	if (claim.meta.changes !== 1) {
-		throw new ApiError("FAILED_PRECONDITION", "Another answer to this decision is being processed. Try again in a moment.");
-	}
-	const release = () =>
-		env.DB.prepare("UPDATE decisions SET state = 'WAITING', attempts = attempts - 1 WHERE id = ? AND state = 'MATCHING'").bind(id).run();
 
 	const attempts = row.attempts + 1;
 	const answer: AnswerRow = {
@@ -471,20 +468,103 @@ export async function createAnswer(
 		create_time: iso(now),
 	};
 	const match = findMatch(JSON.parse(starter.windows_json), windows, row.duration_seconds * 1000, now);
+	const claimId = randomId(16);
+	const eventId = match ? newEventId() : null;
+	// Without a match the answer settles at once; with one it waits in MATCHING until the invite is out.
+	const firstState: StoredState = match ? "MATCHING" : attempts >= MAX_ANSWERS ? "NO_MATCH" : "WAITING";
+	const owned = "EXISTS (SELECT 1 FROM decisions WHERE id = ? AND claim_id = ?)";
 
-	let next: DecisionRow = { ...row, responder_email: caller.email, attempts, update_time: iso(now) };
-	if (match) {
-		let eventId: string;
+	// Claim the decision for this answer. Only one answer at a time gets past this,
+	// so parallel calls can't send two invites or get around the try limit.
+	// Every later write checks the claim, so a stale call can't overwrite a newer state.
+	const claimed = await env.DB.batch([
+		env.DB.prepare(
+			"UPDATE decisions SET state = ?, code_used = ?, claim_id = ?, pending_event_id = ?, responder_email = ?, attempts = attempts + 1, scheduled_start = ?, scheduled_end = ?, update_time = ? WHERE id = ? AND state = 'WAITING' AND code_used = 0 AND attempts = ?",
+		).bind(
+			firstState,
+			firstState === "NO_MATCH" ? 1 : 0,
+			claimId,
+			eventId,
+			caller.email,
+			match ? iso(match.start) : null,
+			match ? iso(match.end) : null,
+			iso(now),
+			id,
+			row.attempts,
+		),
+		env.DB.prepare(`DELETE FROM answers WHERE decision_id = ? AND role = 'RESPONDER' AND ${owned}`).bind(id, id, claimId),
+		env.DB.prepare(
+			`INSERT INTO answers (id, decision_id, author_email, author_name, role, windows_json, time_zone, create_time) SELECT ?, ?, ?, ?, 'RESPONDER', '[]', ?, ? WHERE ${owned}`,
+		).bind(answer.id, id, answer.author_email, answer.author_name, answer.time_zone, answer.create_time, id, claimId),
+		// Once settled, the starter's times go too.
+		...(firstState === "NO_MATCH"
+			? [env.DB.prepare(`UPDATE answers SET windows_json = '[]' WHERE decision_id = ? AND ${owned}`).bind(id, id, claimId)]
+			: []),
+		...(match ? [] : [env.DB.prepare("UPDATE decisions SET claim_id = NULL WHERE id = ? AND claim_id = ?").bind(id, claimId)]),
+	]);
+	if (claimed[0].meta.changes !== 1) {
+		throw new ApiError("FAILED_PRECONDITION", "Another answer to this decision is being processed. Try again in a moment.");
+	}
+
+	let next: DecisionRow = {
+		...row,
+		state: firstState,
+		code_used: firstState === "NO_MATCH" ? 1 : 0,
+		responder_email: caller.email,
+		attempts,
+		update_time: iso(now),
+	};
+	if (match && eventId) {
+		// Gives the try back only when Google confirms no invite went out.
+		const release = () =>
+			env.DB.prepare(
+				"UPDATE decisions SET state = 'WAITING', attempts = attempts - 1, claim_id = NULL, pending_event_id = NULL, scheduled_start = NULL, scheduled_end = NULL WHERE id = ? AND claim_id = ?",
+			)
+				.bind(id, claimId)
+				.run();
+		const failed = new ApiError("FAILED_PRECONDITION", "Neutra couldn't send the invite. Try again in a moment.");
+
 		try {
-			eventId = await createEvent(env, {
+			await createEvent(env, {
+				id: eventId,
 				summary: `${row.starter_name} & ${caller.name}`,
 				start: iso(match.start),
 				end: iso(match.end),
 				attendees: [row.starter_email, caller.email],
 			});
 		} catch (error) {
-			await release();
-			throw error;
+			console.error("invite failed", id, error);
+			// The request may have reached Google anyway. If unsure, the maintenance job finishes it.
+			const created = await eventExists(env, eventId).catch(() => null);
+			if (created === false) {
+				await release();
+				throw failed;
+			}
+			if (created === null) throw failed;
+		}
+
+		let finished = false;
+		try {
+			const result = await env.DB.batch([
+				env.DB.prepare(`UPDATE answers SET windows_json = '[]' WHERE decision_id = ? AND ${owned}`).bind(id, id, claimId),
+				env.DB.prepare(
+					"UPDATE decisions SET state = 'INVITE_SENT', code_used = 1, calendar_event_id = pending_event_id, pending_event_id = NULL, claim_id = NULL, update_time = ? WHERE id = ? AND claim_id = ?",
+				).bind(iso(now), id, claimId),
+			]);
+			finished = result[1].meta.changes === 1;
+		} catch (error) {
+			console.error("saving the answer failed", id, error);
+			// Don't leave an invite Neutra doesn't know about. If the cancel fails too, the maintenance job finishes the answer.
+			if (await deleteEvent(env, eventId).then(() => true, () => false)) await release();
+			throw failed;
+		}
+		if (!finished) {
+			// The maintenance job took over a slow answer. It may have finished it with this invite.
+			const current = await load(env, id).catch(() => null);
+			if (current?.calendar_event_id !== eventId) {
+				await deleteEvent(env, eventId).catch(() => {});
+				throw failed;
+			}
 		}
 		next = {
 			...next,
@@ -494,30 +574,6 @@ export async function createAnswer(
 			scheduled_end: iso(match.end),
 			calendar_event_id: eventId,
 		};
-	} else if (attempts >= MAX_ANSWERS) {
-		next = { ...next, state: "NO_MATCH", code_used: 1 };
-	} else {
-		next = { ...next, state: "WAITING" };
-	}
-	const settled = next.state !== "WAITING";
-
-	try {
-		await env.DB.batch([
-			env.DB.prepare("DELETE FROM answers WHERE decision_id = ? AND role = 'RESPONDER'").bind(id),
-			env.DB.prepare(
-				"INSERT INTO answers (id, decision_id, author_email, author_name, role, windows_json, time_zone, create_time) VALUES (?, ?, ?, ?, ?, '[]', ?, ?)",
-			).bind(answer.id, id, answer.author_email, answer.author_name, answer.role, answer.time_zone, answer.create_time),
-			// Once settled, the starter's times go too.
-			...(settled ? [env.DB.prepare("UPDATE answers SET windows_json = '[]' WHERE decision_id = ?").bind(id)] : []),
-			env.DB.prepare(
-				"UPDATE decisions SET state = ?, code_used = ?, scheduled_start = ?, scheduled_end = ?, calendar_event_id = ?, update_time = ? WHERE id = ? AND state = 'MATCHING'",
-			).bind(next.state, next.code_used, next.scheduled_start, next.scheduled_end, next.calendar_event_id, next.update_time, id),
-		]);
-	} catch (error) {
-		// Don't leave an invite Neutra doesn't know about.
-		if (next.calendar_event_id) await deleteEvent(env, next.calendar_event_id).catch(() => {});
-		await release();
-		throw error;
 	}
 
 	await recordEvent(env, {

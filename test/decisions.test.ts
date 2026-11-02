@@ -322,6 +322,58 @@ describe("get_decision", () => {
 	});
 });
 
+describe("when Google or the database fails", () => {
+	it("gives the try back when the invite surely didn't go out", async () => {
+		const decision = await start();
+		google.failures.create = "before";
+		await rejects(createAnswer(env, ben, { parent: decision.name, code: decision.code!, windows: benFree }), "FAILED_PRECONDITION");
+		const read = await getDecision(env, anna, decision.name);
+		expect(read.state).toBe("WAITING");
+		expect(read.meeting).not.toHaveProperty("scheduledTime");
+		const { decision: after } = await createAnswer(env, ben, { parent: decision.name, code: decision.code!, windows: benBusyThen });
+		expect(after.remainingAttempts).toBe(2);
+	});
+
+	it("keeps the answer when Google created the invite but reported an error", async () => {
+		const decision = await start();
+		google.failures.create = "after";
+		const { decision: after } = await createAnswer(env, ben, { parent: decision.name, code: decision.code!, windows: benFree });
+		expect(after.state).toBe("INVITE_SENT");
+		expect(google.events.size).toBe(1);
+		expect((await getDecision(env, anna, decision.name)).state).toBe("INVITE_SENT");
+	});
+
+	it("leaves an unclear invite to the maintenance job, without showing a time", async () => {
+		const decision = await start();
+		google.failures.create = "after";
+		google.failures.read = true;
+		await rejects(createAnswer(env, ben, { parent: decision.name, code: decision.code!, windows: benFree }), "FAILED_PRECONDITION");
+		google.failures.read = false;
+		const read = await getDecision(env, anna, decision.name);
+		expect(read.state).toBe("WAITING");
+		expect(read.meeting).not.toHaveProperty("scheduledTime");
+		await rejects(createAnswer(env, ben, { parent: decision.name, code: decision.code!, windows: benFree }), "FAILED_PRECONDITION");
+		await rejects(deleteDecision(env, anna, decision.name), "FAILED_PRECONDITION");
+	});
+
+	it("cancels its invite when a newer state took over during the call", async () => {
+		const decision = await start();
+		const db = (env.DB as unknown as FakeD1).db;
+		const realFetch = google.fetch.getMockImplementation()!;
+		google.fetch.mockImplementation(async (input, init) => {
+			const response = await realFetch(input, init);
+			if (init?.method === "POST" && String(input).includes("/calendar/")) {
+				// As if the maintenance job had reset this slow answer meanwhile.
+				db.prepare("UPDATE decisions SET state = 'WAITING', claim_id = NULL, pending_event_id = NULL").run();
+			}
+			return response;
+		});
+		await rejects(createAnswer(env, ben, { parent: decision.name, code: decision.code!, windows: benFree }), "FAILED_PRECONDITION");
+		expect(google.events.size).toBe(0);
+		expect((await getDecision(env, anna, decision.name)).state).toBe("WAITING");
+	});
+});
+
 describe("delete_decision", () => {
 	it("lets only the starter delete, and cancels the invite", async () => {
 		const decision = await start();

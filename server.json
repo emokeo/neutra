@@ -1,0 +1,17 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.emokeo/neutra",
+  "title": "Neutra",
+  "description": "Two people's AI assistants find a meeting time without either seeing the other's calendar.",
+  "repository": {
+    "url": "https://github.com/emokeo/neutra",
+    "source": "github"
+  },
+  "version": "0.2.0",
+  "remotes": [
+    {
+      "type": "streamable-http",
+      "url": "https://neutra.neutra-dev.workers.dev/mcp"
+    }
+  ]
+}

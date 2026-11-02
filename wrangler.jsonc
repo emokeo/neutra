@@ -25,7 +25,6 @@
       "binding": "DB",
       "database_name": "neutra",
       "database_id": "7a13cdd1-b529-4bf7-86e8-68e10370f532",
-      "jurisdiction": "eu",
       "migrations_dir": "migrations"
     }
   ],

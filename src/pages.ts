@@ -48,6 +48,30 @@ export function homePage(): Response {
 	);
 }
 
+/** The page behind the link in a hand-off message: what this is and how to answer. */
+export function requestPage(starterName: string | null): Response {
+	const who = starterName ? starterName.split(/\s+/)[0] : "Someone";
+	return page(
+		"Neutra · Answer a request",
+		`<h1>${who.replace(/[<>&"']/g, "")} would like to meet you</h1>
+<p>Neutra finds a time that works for both of you, <strong>without either of you sharing your calendar</strong>. When it finds one, you both get a calendar invite. No AI on Neutra's side sees your times.</p>
+
+<h2>1. Add Neutra to your assistant (once)</h2>
+<p>Connector address: <code>https://neutra.neutra-dev.workers.dev/mcp</code></p>
+<ul>
+<li><strong>Claude:</strong> Settings → Connectors → Add custom connector → paste the address → <em>Register automatically</em> → sign in with Google.</li>
+<li><strong>Muse:</strong> Settings → Connectors → Add custom connector → paste the address → sign in.</li>
+<li><strong>Other assistants:</strong> any assistant that supports remote MCP connectors with sign-in.</li>
+</ul>
+<p>Neutra only uses your name and email from Google sign-in, to send you the invite.</p>
+
+<h2>2. Paste the line from the message</h2>
+<p>Paste the quoted line from the message you received into your assistant, and add when you're free. That's it.</p>
+
+<p><a href="/">What is Neutra?</a> · <a href="/privacy">Privacy</a></p>`,
+	);
+}
+
 export function privacyPage(): Response {
 	return page(
 		"Neutra · Privacy",

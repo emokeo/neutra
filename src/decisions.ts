@@ -2,7 +2,7 @@
 import { createEvent, deleteEvent, eventExists, getReplies, newEventId, type InviteReply } from "./calendar";
 import { recordEvent } from "./events";
 import { checkCreateAnswer, checkCreateDecision } from "./limits";
-import { formatDay, formatRange, isValidTimeZone, parseTimestamp } from "./time";
+import { formatRange, isValidTimeZone, parseTimestamp } from "./time";
 
 export type Caller = { email: string; name: string; client?: string };
 export type Interval = { startTime: string; endTime: string };
@@ -113,23 +113,29 @@ function parseWindows(windows: Interval[], now: number, timeZone?: string): { st
 }
 
 /** The message the starter forwards. Plain text, so it reads well in any chat app. */
-export function handoffMessage(p: {
-	starterName: string;
-	decisionName: string;
-	code: string;
-	connectorUrl: string;
-	expires: string;
-}): string {
-	const home = p.connectorUrl.replace(/\/mcp$/, "").replace(/^https?:\/\//, "");
+/** One thing to paste: "neutra:<decision id>.<code>". */
+export function combinedCode(decisionId: string, code: string): string {
+	return `neutra:${decisionId}.${code}`;
+}
+
+/** Splits a combined code back into decision ID and code, or returns null. */
+export function splitCombinedCode(value: string): { id: string; code: string } | null {
+	const m = /^\s*neutra:([a-z][a-z2-7]{25})\.([a-z][a-z2-7]{11})\s*$/i.exec(value);
+	return m ? { id: m[1].toLowerCase(), code: m[2].toLowerCase() } : null;
+}
+
+/** The message the starter forwards. Plain text, so it reads well in any chat app. */
+export function handoffMessage(p: { starterName: string; decisionId: string; code: string; connectorUrl: string }): string {
+	const home = p.connectorUrl.replace(/\/mcp$/, "");
 	return `${p.starterName} would like to meet you. 👋
 Neutra finds a time that works for both of you, without either of you sharing your calendar. When it finds one, you both get a calendar invite.
 
-To answer, paste this to your AI assistant:
-"Connect the Neutra connector at ${p.connectorUrl}, then answer Neutra request ${p.decisionName} with code ${p.code}. I'm free: …"
+To answer:
+1. Add Neutra to your AI assistant (once, about a minute): ${home}/r/${p.decisionId}
+2. Paste this to your assistant, with when you're free:
+"Answer Neutra request ${combinedCode(p.decisionId, p.code)}. I'm free: …"
 
-The first time, your assistant asks you to sign in with Google. Neutra only uses your name and email, to send you the invite. No AI on Neutra's side sees your times.
-
-If your assistant can't add connectors from chat, add it once under Settings → Connectors. Works until ${p.expires} · ${home}`;
+Neutra only uses your name and email from Google sign-in, to send you the invite. No AI on Neutra's side sees your times.`;
 }
 
 /** Total time covered by the windows, counting overlaps once. */
@@ -237,6 +243,12 @@ async function refresh(
 				? "ACCEPTED"
 				: "INVITE_SENT";
 		if (next !== row.state && (await setState(env, row.id, row.state, next, now))) {
+			if (next === "DECLINED") {
+				// One person said no: cancel the meeting for the other person too.
+				await deleteEvent(env, row.calendar_event_id).catch(() => {});
+				await env.DB.prepare("UPDATE decisions SET calendar_event_id = NULL WHERE id = ?").bind(row.id).run();
+				row = { ...row, calendar_event_id: null };
+			}
 			if (next !== "INVITE_SENT") {
 				await recordEvent(env, { type: "invite_reply", decisionRef: row.stats_ref, detail: { state: next } });
 			}
@@ -375,13 +387,7 @@ export async function createDecision(
 			new Map(),
 			caller,
 			code,
-			handoffMessage({
-				starterName: caller.name,
-				decisionName: `decisions/${id}`,
-				code,
-				connectorUrl: env.MCP_RESOURCE,
-				expires: formatDay(expire, request.timeZone),
-			}),
+			handoffMessage({ starterName: caller.name, decisionId: id, code, connectorUrl: env.MCP_RESOURCE }),
 		),
 		// What Neutra understood, in the starter's own zone, so the agent can confirm it with them.
 		receivedWindows: windows.map((w) => formatRange(w.start, w.end, request.timeZone)),
@@ -433,16 +439,22 @@ export async function deleteDecision(env: Env, caller: Caller, name: string): Pr
 export async function createAnswer(
 	env: Env,
 	caller: Caller,
-	request: { parent: string; code: string; windows: Interval[]; timeZone?: string },
+	request: { parent?: string; code: string; windows: Interval[]; timeZone?: string },
 ) {
 	const now = Date.now();
-	const id = idFromName(request.parent);
+	// Either the combined code alone, or the decision name plus the code.
+	const combined = splitCombinedCode(request.code);
+	const id = combined ? combined.id : idFromName(request.parent ?? "");
+	if (combined && request.parent && idFromName(request.parent) !== combined.id) {
+		throw new ApiError("INVALID_ARGUMENT", "The decision name and the combined code don't match.");
+	}
+	const code = combined ? combined.code : request.code;
 	const loaded = await load(env, id);
 	// Check who is calling before doing anything else with the decision.
 	if (same(loaded.starter_email, caller.email)) {
 		throw new ApiError("PERMISSION_DENIED", "The starter already answered when creating the decision.");
 	}
-	if ((await sha256(request.code.trim().toLowerCase())) !== loaded.code_hash) {
+	if ((await sha256(code.trim().toLowerCase())) !== loaded.code_hash) {
 		throw new ApiError("PERMISSION_DENIED", "The code is wrong.");
 	}
 	// The code binds to the first person who answers with it.

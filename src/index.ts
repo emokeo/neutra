@@ -113,8 +113,8 @@ function createServer() {
 			description:
 				"Answer a Neutra request with your person's free times. Neutra compares them privately. If a time fits both, it sends one calendar invite; otherwise, nobody learns anything about the other's times.",
 			inputSchema: z.object({
-				parent: DecisionName,
-				code: z.string().describe("The code from the message the other person forwarded"),
+				parent: DecisionName.optional().describe("Not needed when code is the combined form"),
+				code: z.string().describe('The code from the forwarded message, usually the combined form "neutra:<id>.<code>"'),
 				answer: z.object({ meeting: z.object({ availableWindows: AvailableWindows, timeZone: TimeZone }) }),
 			}),
 			// Sends a calendar invite to both people when there is a match.

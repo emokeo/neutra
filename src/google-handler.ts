@@ -1,6 +1,7 @@
 import type { AuthRequest, OAuthHelpers } from "@cloudflare/workers-oauth-provider";
 import { Hono } from "hono";
-import { homePage, privacyPage } from "./pages";
+import { recordEvent } from "./events";
+import { homePage, privacyPage, requestPage } from "./pages";
 import { fetchUpstreamAuthToken, getUpstreamAuthorizeUrl, isAllowed, type Props } from "./utils";
 import {
 	addApprovedClient,
@@ -18,6 +19,21 @@ const app = new Hono<{ Bindings: Env & { OAUTH_PROVIDER: OAuthHelpers } }>();
 
 app.get("/", () => homePage());
 app.get("/privacy", () => privacyPage());
+
+// The link in a hand-off message. Counts "message opened" (link previews and bots excluded).
+app.get("/r/:id", async (c) => {
+	const id = c.req.param("id");
+	const row = /^[a-z][a-z2-7]{25}$/.test(id)
+		? await c.env.DB.prepare("SELECT starter_name, stats_ref FROM decisions WHERE id = ?")
+				.bind(id)
+				.first<{ starter_name: string; stats_ref: string | null }>()
+		: null;
+	const agent = c.req.header("user-agent") ?? "";
+	if (row && !/bot|crawl|spider|preview|facebookexternalhit|whatsapp|slack|telegram|twitter|discord|linkedin|skype/i.test(agent)) {
+		c.executionCtx.waitUntil(recordEvent(c.env, { type: "handoff_opened", decisionRef: row.stats_ref }));
+	}
+	return requestPage(row?.starter_name ?? null);
+});
 
 app.get("/authorize", async (c) => {
 	const oauthReqInfo = await c.env.OAUTH_PROVIDER.parseAuthRequest(c.req.raw);

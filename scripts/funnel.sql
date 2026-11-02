@@ -10,6 +10,7 @@ matched AS (
   WHERE type = 'answer_submitted' AND json_extract(detail_json, '$.outcome') = 'match'
 )
 SELECT 'decisions started' AS step, COUNT(*) AS n FROM decisions_started
+UNION ALL SELECT 'message opened (link)', COUNT(DISTINCT decision_ref) FROM recent WHERE type = 'handoff_opened' AND decision_ref IN (SELECT decision_ref FROM decisions_started)
 UNION ALL SELECT 'answered by the second person', COUNT(*) FROM answered WHERE decision_ref IN (SELECT decision_ref FROM decisions_started)
 UNION ALL SELECT 'time found', COUNT(*) FROM matched WHERE decision_ref IN (SELECT decision_ref FROM decisions_started)
 UNION ALL SELECT 'invite accepted by both', COUNT(DISTINCT decision_ref) FROM recent WHERE type = 'invite_reply' AND json_extract(detail_json, '$.state') = 'ACCEPTED'

@@ -13,6 +13,8 @@
   // https://<worker-name>.<your-subdomain>.workers.dev/mcp
   "vars": {
     "MCP_RESOURCE": "https://neutra.neutra-dev.workers.dev/mcp",
+    // "allowlist": only the emails in ALLOWED_EMAILS can sign in. "open": any verified Google account.
+    "ACCESS_MODE": "allowlist",
   },
   "kv_namespaces": [
     {

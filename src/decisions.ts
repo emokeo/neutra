@@ -1,6 +1,7 @@
 // Decisions and answers: storage, matching and the rules from the v0 API.
 import { createEvent, deleteEvent, getReplies, type InviteReply } from "./calendar";
 import { recordEvent } from "./events";
+import { checkCreateAnswer, checkCreateDecision } from "./limits";
 import { formatDay, formatRange, isValidTimeZone, parseTimestamp } from "./time";
 
 export type Caller = { email: string; name: string; client?: string };
@@ -9,7 +10,7 @@ export type Interval = { startTime: string; endTime: string };
 export type State = "WAITING" | "NO_MATCH" | "INVITE_SENT" | "ACCEPTED" | "DECLINED" | "EXPIRED";
 
 /** An error with a google.rpc canonical code, as in the API's error table. */
-export type ErrorCode = "NOT_FOUND" | "PERMISSION_DENIED" | "FAILED_PRECONDITION" | "INVALID_ARGUMENT";
+export type ErrorCode = "NOT_FOUND" | "PERMISSION_DENIED" | "FAILED_PRECONDITION" | "INVALID_ARGUMENT" | "RESOURCE_EXHAUSTED";
 
 export class ApiError extends Error {
 	readonly code: ErrorCode;
@@ -279,6 +280,7 @@ export async function createDecision(
 	request: { durationSeconds: string; starterWindows: Interval[]; timeZone?: string },
 ) {
 	const now = Date.now();
+	await checkCreateDecision(env, caller.email, now);
 	const durationSeconds = parseDuration(request.durationSeconds);
 	const windows = parseWindows(request.starterWindows, now, request.timeZone);
 	requireBreadth(windows, durationSeconds);
@@ -421,6 +423,7 @@ export async function createAnswer(
 	}
 	const windows = parseWindows(request.windows, now, request.timeZone);
 	requireBreadth(windows, row.duration_seconds);
+	await checkCreateAnswer(env, caller.email, row.starter_email, id, now);
 	const starter = (await answersOf(env, id)).find((a) => a.role === "STARTER");
 	if (!starter) throw new ApiError("FAILED_PRECONDITION", "The decision has no starter answer.");
 

@@ -1,5 +1,6 @@
 // Decisions and answers: storage, matching and the rules from the v0 API.
 import { createEvent, deleteEvent, getReplies, type InviteReply } from "./calendar";
+import { formatRange, isValidTimeZone, parseTimestamp } from "./time";
 
 export type Caller = { email: string; name: string };
 export type Interval = { startTime: string; endTime: string };
@@ -42,6 +43,7 @@ type AnswerRow = {
 	author_name: string;
 	role: "STARTER" | "RESPONDER";
 	windows_json: string;
+	time_zone: string | null;
 	create_time: string;
 };
 
@@ -77,12 +79,21 @@ function parseDuration(duration: string): number {
 	return seconds;
 }
 
-function parseWindows(windows: Interval[], now: number): { start: number; end: number }[] {
+function parseWindows(windows: Interval[], now: number, timeZone?: string): { start: number; end: number }[] {
+	if (timeZone !== undefined && !isValidTimeZone(timeZone)) {
+		throw new ApiError("INVALID_ARGUMENT", `"${timeZone}" is not a time zone. Use an IANA name, e.g. "Europe/Zurich".`);
+	}
 	const limit = now + MAX_DAYS_AHEAD * 24 * 60 * 60 * 1000;
 	return windows.map((w) => {
-		const start = Date.parse(w.startTime);
-		const end = Date.parse(w.endTime);
-		if (Number.isNaN(start) || Number.isNaN(end) || end <= start) {
+		const start = parseTimestamp(w.startTime, timeZone);
+		const end = parseTimestamp(w.endTime, timeZone);
+		if (start === null || end === null) {
+			throw new ApiError(
+				"INVALID_ARGUMENT",
+				'Send local times with a timeZone (e.g. "2026-11-04T18:00" and "Europe/Zurich"), or timestamps with an offset (e.g. "2026-11-04T18:00:00+01:00").',
+			);
+		}
+		if (end <= start) {
 			throw new ApiError("INVALID_ARGUMENT", "Each window needs a startTime before its endTime.");
 		}
 		if (end <= now || start > limit) {
@@ -194,13 +205,18 @@ async function refresh(
 function view(row: DecisionRow, answers: AnswerRow[], replies: Map<string, InviteReply>, caller: Caller, code?: string) {
 	const isStarter = same(caller.email, row.starter_email);
 	const isResponder = !!row.responder_email && same(caller.email, row.responder_email);
+	const timeZone = answers.find((a) => same(a.author_email, caller.email))?.time_zone ?? "UTC";
 	const name = `decisions/${row.id}`;
 	return {
 		name,
 		meeting: {
 			duration: `${row.duration_seconds}s`,
 			...(row.scheduled_start && row.scheduled_end
-				? { scheduledTime: { startTime: row.scheduled_start, endTime: row.scheduled_end } }
+				? {
+						scheduledTime: { startTime: row.scheduled_start, endTime: row.scheduled_end },
+						// The meeting time in the caller's own time zone, ready to show.
+						scheduledTimeLocal: formatRange(Date.parse(row.scheduled_start), Date.parse(row.scheduled_end), timeZone),
+					}
 				: {}),
 		},
 		participants: answers.map((a) => ({
@@ -226,11 +242,11 @@ function view(row: DecisionRow, answers: AnswerRow[], replies: Map<string, Invit
 export async function createDecision(
 	env: Env,
 	caller: Caller,
-	request: { durationSeconds: string; starterWindows: Interval[] },
+	request: { durationSeconds: string; starterWindows: Interval[]; timeZone?: string },
 ) {
 	const now = Date.now();
 	const durationSeconds = parseDuration(request.durationSeconds);
-	const windows = parseWindows(request.starterWindows, now);
+	const windows = parseWindows(request.starterWindows, now, request.timeZone);
 	requireBreadth(windows, durationSeconds);
 	const lastStart = Math.max(...windows.map((w) => w.end)) - durationSeconds * 1000;
 	if (lastStart < now + MIN_LEAD_MS) {
@@ -264,6 +280,7 @@ export async function createDecision(
 		author_name: caller.name,
 		role: "STARTER",
 		windows_json: JSON.stringify(windows),
+		time_zone: request.timeZone ?? null,
 		create_time: iso(now),
 	};
 	await env.DB.batch([
@@ -271,10 +288,14 @@ export async function createDecision(
 			"INSERT INTO decisions (id, starter_email, starter_name, duration_seconds, state, code_hash, code_used, expire_time, create_time, update_time) VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?, ?)",
 		).bind(id, row.starter_email, row.starter_name, durationSeconds, "WAITING", row.code_hash, row.expire_time, row.create_time, row.update_time),
 		env.DB.prepare(
-			"INSERT INTO answers (id, decision_id, author_email, author_name, role, windows_json, create_time) VALUES (?, ?, ?, ?, ?, ?, ?)",
-		).bind(answer.id, id, answer.author_email, answer.author_name, answer.role, answer.windows_json, answer.create_time),
+			"INSERT INTO answers (id, decision_id, author_email, author_name, role, windows_json, time_zone, create_time) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+		).bind(answer.id, id, answer.author_email, answer.author_name, answer.role, answer.windows_json, answer.time_zone, answer.create_time),
 	]);
-	return view(row, [answer], new Map(), caller, code);
+	return {
+		...view(row, [answer], new Map(), caller, code),
+		// What Neutra understood, in the starter's own zone, so the agent can confirm it with them.
+		receivedWindows: windows.map((w) => formatRange(w.start, w.end, request.timeZone)),
+	};
 }
 
 export async function getDecision(env: Env, caller: Caller, name: string) {
@@ -305,7 +326,7 @@ export async function deleteDecision(env: Env, caller: Caller, name: string): Pr
 export async function createAnswer(
 	env: Env,
 	caller: Caller,
-	request: { parent: string; code: string; windows: Interval[] },
+	request: { parent: string; code: string; windows: Interval[]; timeZone?: string },
 ) {
 	const now = Date.now();
 	const id = idFromName(request.parent);
@@ -324,7 +345,7 @@ export async function createAnswer(
 	if (row.state !== "WAITING" || row.code_used) {
 		throw new ApiError("FAILED_PRECONDITION", `The decision is ${row.state}, not WAITING.`);
 	}
-	const windows = parseWindows(request.windows, now);
+	const windows = parseWindows(request.windows, now, request.timeZone);
 	requireBreadth(windows, row.duration_seconds);
 	const starter = (await answersOf(env, id)).find((a) => a.role === "STARTER");
 	if (!starter) throw new ApiError("FAILED_PRECONDITION", "The decision has no starter answer.");
@@ -337,6 +358,7 @@ export async function createAnswer(
 		author_name: caller.name,
 		role: "RESPONDER",
 		windows_json: "[]", // the responder's times are never kept
+		time_zone: request.timeZone ?? null,
 		create_time: iso(now),
 	};
 	const match = findMatch(JSON.parse(starter.windows_json), windows, row.duration_seconds * 1000, now);
@@ -365,8 +387,8 @@ export async function createAnswer(
 	await env.DB.batch([
 		env.DB.prepare("DELETE FROM answers WHERE decision_id = ? AND role = 'RESPONDER'").bind(id),
 		env.DB.prepare(
-			"INSERT INTO answers (id, decision_id, author_email, author_name, role, windows_json, create_time) VALUES (?, ?, ?, ?, ?, '[]', ?)",
-		).bind(answer.id, id, answer.author_email, answer.author_name, answer.role, answer.create_time),
+			"INSERT INTO answers (id, decision_id, author_email, author_name, role, windows_json, time_zone, create_time) VALUES (?, ?, ?, ?, ?, '[]', ?, ?)",
+		).bind(answer.id, id, answer.author_email, answer.author_name, answer.role, answer.time_zone, answer.create_time),
 		// Once settled, the starter's times go too.
 		...(settled ? [env.DB.prepare("UPDATE answers SET windows_json = '[]' WHERE decision_id = ?").bind(id)] : []),
 		env.DB.prepare(
@@ -391,6 +413,7 @@ export async function createAnswer(
 			createTime: answer.create_time,
 		},
 		decision: view(next, [starter, answer], new Map(), caller),
+		receivedWindows: windows.map((w) => formatRange(w.start, w.end, request.timeZone)),
 	};
 }
 

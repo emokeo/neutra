@@ -186,6 +186,42 @@ describe("create_answer", () => {
 	});
 });
 
+describe("time zones", () => {
+	it("accepts local times with a zone and echoes back what it understood", async () => {
+		const decision = await createDecision(env, anna, {
+			durationSeconds: "3600s",
+			starterWindows: [window("2026-11-04T18:00", "2026-11-04T21:00")],
+			timeZone: "Europe/Zurich",
+		});
+		expect(decision.receivedWindows).toEqual(["Wed 4 Nov, 18:00–21:00 (Europe/Zurich)"]);
+
+		// Ben is in New York: 13:10–16:00 there is 18:10–21:00 UTC.
+		const { decision: after } = await createAnswer(env, ben, {
+			parent: decision.name,
+			code: decision.code!,
+			windows: [window("2026-11-04T13:10", "2026-11-04T16:00")],
+			timeZone: "America/New_York",
+		});
+		expect(after.state).toBe("INVITE_SENT");
+		expect(after.meeting.scheduledTime?.startTime).toBe("2026-11-04T18:15:00.000Z");
+		expect(after.meeting.scheduledTimeLocal).toBe("Wed 4 Nov, 13:15–14:15 (America/New_York)");
+		expect((await getDecision(env, anna, decision.name)).meeting.scheduledTimeLocal).toBe(
+			"Wed 4 Nov, 19:15–20:15 (Europe/Zurich)",
+		);
+	});
+
+	it("refuses local times without a zone, and unknown zones", async () => {
+		await rejects(
+			createDecision(env, anna, { durationSeconds: "3600s", starterWindows: [window("2026-11-04T18:00", "2026-11-04T21:00")] }),
+			"INVALID_ARGUMENT",
+		);
+		await rejects(
+			createDecision(env, anna, { durationSeconds: "3600s", starterWindows: annaFree, timeZone: "Zurich" }),
+			"INVALID_ARGUMENT",
+		);
+	});
+});
+
 describe("get_decision", () => {
 	it("is readable by participants only", async () => {
 		const decision = await start();

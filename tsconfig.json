@@ -38,5 +38,6 @@
 
 		/* Skip type checking all .d.ts files. */
 		"skipLibCheck": true
-	}
+	},
+	"exclude": ["node_modules", "test", "vitest.config.ts"]
 }

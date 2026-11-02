@@ -28,7 +28,9 @@ class Statement {
 export class FakeD1 {
 	readonly db = new Database(":memory:");
 	constructor() {
-		this.db.exec(readFileSync(new URL("../migrations/0001_init.sql", import.meta.url), "utf8"));
+		for (const file of ["0001_init.sql", "0002_retries.sql"]) {
+			this.db.exec(readFileSync(new URL(`../migrations/${file}`, import.meta.url), "utf8"));
+		}
 	}
 	prepare(sql: string) {
 		return new Statement(this.db, sql);

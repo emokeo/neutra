@@ -106,6 +106,10 @@ describe("create_decision", () => {
 			"INVALID_ARGUMENT",
 		);
 		await rejects(createDecision(env, anna, { durationSeconds: "0s", starterWindows: annaFree }), "INVALID_ARGUMENT");
+		await rejects(
+			createDecision(env, anna, { durationSeconds: "3600s", starterWindows: [window("2026-11-04T18:00:00Z", "2026-11-04T19:00:00Z")] }),
+			"INVALID_ARGUMENT",
+		);
 	});
 });
 
@@ -127,21 +131,48 @@ describe("create_answer", () => {
 		expect(own.meeting.availableWindows).toEqual([]);
 	});
 
-	it("ends as NO_MATCH without an invite when the times don't overlap", async () => {
+	it("after no match, the same person may retry twice; then it ends as NO_MATCH", async () => {
 		const decision = await start();
-		const { decision: after } = await createAnswer(env, ben, { parent: decision.name, code: decision.code!, windows: benBusyThen });
-		expect(after.state).toBe("NO_MATCH");
+		const answer = () => createAnswer(env, ben, { parent: decision.name, code: decision.code!, windows: benBusyThen });
+
+		const first = await answer();
+		expect(first.decision.state).toBe("WAITING");
+		expect(first.decision.remainingAttempts).toBe(2);
+		expect((await answer()).decision.remainingAttempts).toBe(1);
+		expect((await answer()).decision.state).toBe("NO_MATCH");
+		await rejects(answer(), "FAILED_PRECONDITION");
 		expect(google.events.size).toBe(0);
 	});
 
-	it("refuses a wrong code, the starter, and a second use of the code", async () => {
+	it("a retry can still match", async () => {
+		const decision = await start();
+		await createAnswer(env, ben, { parent: decision.name, code: decision.code!, windows: benBusyThen });
+		const { decision: after } = await createAnswer(env, ben, { parent: decision.name, code: decision.code!, windows: benFree });
+		expect(after.state).toBe("INVITE_SENT");
+		expect(google.events.size).toBe(1);
+	});
+
+	it("binds the code to the first person who answers", async () => {
 		const decision = await start();
 		await rejects(createAnswer(env, ben, { parent: decision.name, code: "wrongcode234", windows: benFree }), "PERMISSION_DENIED");
 		await rejects(createAnswer(env, anna, { parent: decision.name, code: decision.code!, windows: benFree }), "PERMISSION_DENIED");
 
 		await createAnswer(env, ben, { parent: decision.name, code: decision.code!, windows: benBusyThen });
-		await rejects(createAnswer(env, ben, { parent: decision.name, code: decision.code!, windows: benFree }), "PERMISSION_DENIED");
 		await rejects(createAnswer(env, eve, { parent: decision.name, code: decision.code!, windows: benFree }), "PERMISSION_DENIED");
+	});
+
+	it("refuses answers narrower than twice the meeting, without using a try", async () => {
+		const decision = await start();
+		const narrow = [window("2026-11-04T18:15:00Z", "2026-11-04T19:15:00Z")];
+		await rejects(createAnswer(env, ben, { parent: decision.name, code: decision.code!, windows: narrow }), "INVALID_ARGUMENT");
+		const first = await createAnswer(env, ben, { parent: decision.name, code: decision.code!, windows: benBusyThen });
+		expect(first.decision.remainingAttempts).toBe(2);
+	});
+
+	it("keeps no times of the responder, even while retries remain", async () => {
+		const decision = await start();
+		const { answer } = await createAnswer(env, ben, { parent: decision.name, code: decision.code!, windows: benBusyThen });
+		expect((await getAnswer(env, ben, answer.name)).meeting.availableWindows).toEqual([]);
 	});
 
 	it("does not use up the code when the answer is invalid", async () => {

@@ -56,3 +56,10 @@ export function formatRange(start: number, end: number, timeZone = "UTC"): strin
 	const endText = startDay === endDay ? time.format(end) : `${endDay}, ${time.format(end)}`;
 	return `${startDay}, ${time.format(start)}–${endText} (${timeZone})`;
 }
+
+/** "Thu 5 Nov", in the given zone (UTC if none). */
+export function formatDay(instant: number, timeZone = "UTC"): string {
+	return new Intl.DateTimeFormat("en-GB", { timeZone, weekday: "short", day: "numeric", month: "short" })
+		.format(instant)
+		.replace(",", "");
+}

@@ -4,8 +4,10 @@ import { nextStep, SERVER_INSTRUCTIONS } from "../src/guidance";
 const meeting = { scheduledTime: { startTime: "2026-11-04T18:15:00.000Z", endTime: "2026-11-04T19:15:00.000Z" } };
 
 describe("nextStep", () => {
-	it("tells the starter to pass the hand-off message on unchanged", () => {
-		expect(nextStep("create_decision", { state: "WAITING", meeting: {} })).toMatch(/exactly as written/);
+	it("tells the starter to pass the hand-off message on unchanged, and why it's private", () => {
+		const step = nextStep("create_decision", { state: "WAITING", meeting: {} });
+		expect(step).toMatch(/exactly as written/);
+		expect(step).toMatch(/never see their times/);
 	});
 
 	it("tells the responder how many tries are left", () => {

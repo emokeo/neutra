@@ -35,6 +35,7 @@ beforeEach(() => {
 		GOOGLE_CLIENT_ID: "id",
 		GOOGLE_CLIENT_SECRET: "secret",
 		INVITER_REFRESH_TOKEN: "refresh",
+		MCP_RESOURCE: "https://neutra.example.dev/mcp",
 	} as unknown as Env;
 });
 
@@ -94,6 +95,17 @@ describe("create_decision", () => {
 		expect(decision.code).toMatch(/^[a-z][a-z2-7]{11}$/);
 		expect(decision.handoffMessage).toContain(decision.code);
 		expect(decision.handoffMessage).toContain(decision.name);
+	});
+
+	it("leads the hand-off message with the reason and says how to answer", async () => {
+		const decision = await start();
+		const message = decision.handoffMessage!;
+		expect(message.startsWith("Anna would like to meet you.")).toBe(true);
+		expect(message).toContain("without either of you sharing your calendar");
+		expect(message).toContain("Connect the Neutra connector at https://neutra.example.dev/mcp");
+		expect(message).toContain(`with code ${decision.code}`);
+		expect(message).toContain("sign in with Google");
+		expect(message).toContain("Works until Wed 4 Nov · neutra.example.dev");
 	});
 
 	it("rejects windows in the past or too far ahead, and bad durations", async () => {

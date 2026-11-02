@@ -17,14 +17,14 @@
   "kv_namespaces": [
     {
       "binding": "OAUTH_KV",
-      "id": "<Add-KV-ID>"
+      "id": "0cfbaff957444146814c3e0ce445b7cb"
     }
   ],
   "d1_databases": [
     {
       "binding": "DB",
       "database_name": "neutra",
-      "database_id": "<Add-D1-ID>",
+      "database_id": "7a13cdd1-b529-4bf7-86e8-68e10370f532",
       "migrations_dir": "migrations"
     }
   ],

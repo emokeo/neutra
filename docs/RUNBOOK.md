@@ -15,6 +15,7 @@
 - the home page is down,
 - the inviter key is refused or lacks `calendar.events` / `gmail.send`,
 - failure emails have been stuck for over an hour,
+- answers have been stuck for over an hour (the 15-minute job couldn't reach Google to finish them),
 - requests failed with an internal error in the last 24 hours.
 
 ## The inviter key (neutra.invites@gmail.com)

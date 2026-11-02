@@ -1,5 +1,6 @@
 import type { AuthRequest, OAuthHelpers } from "@cloudflare/workers-oauth-provider";
 import { Hono } from "hono";
+import { homePage, privacyPage } from "./pages";
 import { fetchUpstreamAuthToken, getUpstreamAuthorizeUrl, isAllowed, type Props } from "./utils";
 import {
 	addApprovedClient,
@@ -14,6 +15,9 @@ import {
 } from "./workers-oauth-utils";
 
 const app = new Hono<{ Bindings: Env & { OAUTH_PROVIDER: OAuthHelpers } }>();
+
+app.get("/", () => homePage());
+app.get("/privacy", () => privacyPage());
 
 app.get("/authorize", async (c) => {
 	const oauthReqInfo = await c.env.OAUTH_PROVIDER.parseAuthRequest(c.req.raw);

@@ -89,6 +89,25 @@ describe("retention", () => {
 		expect(count("answers")).toBe(0);
 	});
 
+	it("also removes the past meeting from Neutra's calendar, quietly", async () => {
+		const decision = await start();
+		await createAnswer(env, ben, { parent: decision.name, code: decision.code!, windows: benFree });
+		expect(google.events.size).toBe(1);
+		await runMaintenance(env, at("2026-11-12T08:00:00Z"));
+		expect(google.events.size).toBe(0);
+		const deletion = google.fetch.mock.calls.find(([, init]) => init?.method === "DELETE");
+		expect(String(deletion?.[0])).toContain("sendUpdates=none");
+	});
+
+	it("puts an answer that crashed mid-way back to WAITING", async () => {
+		const decision = await start();
+		db.db.prepare("UPDATE decisions SET state = 'MATCHING', attempts = 1, update_time = ?").run("2026-11-03T08:00:00.000Z");
+		await runMaintenance(env, at("2026-11-03T08:10:00Z"));
+		expect((await getDecision(env, anna, decision.name)).state).toBe("WAITING");
+		const { decision: after } = await createAnswer(env, ben, { parent: decision.name, code: decision.code!, windows: benFree });
+		expect(after.state).toBe("INVITE_SENT");
+	});
+
 	it("deletes an expired decision 7 days after it ended", async () => {
 		await start();
 		await runMaintenance(env, at("2026-11-04T19:30:00Z"));

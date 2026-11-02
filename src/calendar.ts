@@ -5,7 +5,11 @@ const CALENDAR = "https://www.googleapis.com/calendar/v3/calendars/primary/event
 
 export type InviteReply = "NEEDS_ACTION" | "ACCEPTED" | "DECLINED" | "TENTATIVE";
 
+// Reused across calls in the same isolate until shortly before it expires.
+let cachedToken: { token: string; expiresAt: number } | null = null;
+
 async function accessToken(env: Env): Promise<string> {
+	if (cachedToken && cachedToken.expiresAt > Date.now() + 60_000) return cachedToken.token;
 	const response = await fetch("https://oauth2.googleapis.com/token", {
 		method: "POST",
 		headers: { "Content-Type": "application/x-www-form-urlencoded" },
@@ -19,7 +23,8 @@ async function accessToken(env: Env): Promise<string> {
 	if (!response.ok) {
 		throw new Error(`Inviter token refresh failed: ${response.status}`);
 	}
-	const { access_token } = (await response.json()) as { access_token: string };
+	const { access_token, expires_in } = (await response.json()) as { access_token: string; expires_in?: number };
+	cachedToken = { token: access_token, expiresAt: Date.now() + (expires_in ?? 3000) * 1000 };
 	return access_token;
 }
 
@@ -74,9 +79,9 @@ export async function getReplies(env: Env, eventId: string): Promise<Map<string,
 	return replies;
 }
 
-/** Cancels the event; Google notifies the attendees. */
-export async function deleteEvent(env: Env, eventId: string): Promise<void> {
-	const response = await fetch(`${CALENDAR}/${encodeURIComponent(eventId)}?sendUpdates=all`, {
+/** Removes the event. With notify, Google sends both people a cancellation; without, it's quiet cleanup. */
+export async function deleteEvent(env: Env, eventId: string, notify = true): Promise<void> {
+	const response = await fetch(`${CALENDAR}/${encodeURIComponent(eventId)}?sendUpdates=${notify ? "all" : "none"}`, {
 		method: "DELETE",
 		headers: { Authorization: `Bearer ${await accessToken(env)}` },
 	});

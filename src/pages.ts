@@ -62,6 +62,7 @@ export function privacyPage(): Response {
 
 <h2>Decisions</h2>
 <p>For each decision we keep the participants' names and email addresses, its state and, if one was found, the meeting time. <strong>Everything about a decision is deleted 7 days after its meeting ends</strong>, or 7 days after it ended without a meeting. The person who started a decision can delete it earlier at any time, which also cancels the invite.</p>
+<p>Two kinds of copies outlive this: database backups, which Cloudflare keeps for up to 30 days, and the invite itself, which stays in your own calendar and inbox like any invite you receive. The invites and notice emails Neutra sent also remain in Neutra's sending account.</p>
 
 <h2>Emails</h2>
 <p>If nobody answers in time, or no common time is found, the person who started the decision gets one short email from neutra.invites@gmail.com saying so.</p>

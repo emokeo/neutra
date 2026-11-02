@@ -1,5 +1,5 @@
 // Runs every 15 minutes: expires decisions, tells starters when nothing worked out, and deletes old data.
-import { sendEmail } from "./calendar";
+import { deleteEvent, sendEmail } from "./calendar";
 import { recordEvent } from "./events";
 import { formatDay } from "./time";
 
@@ -48,6 +48,13 @@ export async function runMaintenance(env: Env, now = Date.now()) {
 	const nowIso = new Date(now).toISOString();
 	const result = { expired: 0, notified: 0, deleted: 0 };
 
+	// 0. Answers that crashed mid-way (MATCHING for over 5 minutes) go back to WAITING.
+	await env.DB.prepare(
+		"UPDATE decisions SET state = 'WAITING', attempts = attempts - 1 WHERE state = 'MATCHING' AND update_time < ?",
+	)
+		.bind(new Date(now - 5 * 60_000).toISOString())
+		.run();
+
 	// 1. Decisions nobody settled in time.
 	const { results: overdue } = await env.DB.prepare(
 		"SELECT id, stats_ref, responder_email FROM decisions WHERE state = 'WAITING' AND expire_time < ?",
@@ -66,13 +73,15 @@ export async function runMaintenance(env: Env, now = Date.now()) {
 	// 2. Delete everything about decisions that ended more than RETENTION_DAYS ago.
 	const cutoff = new Date(now - RETENTION_DAYS * 24 * 60 * 60 * 1000).toISOString();
 	const { results: old } = await env.DB.prepare(
-		`SELECT id FROM decisions
+		`SELECT id, calendar_event_id FROM decisions
 		 WHERE (state IN ('INVITE_SENT', 'ACCEPTED', 'DECLINED') AND scheduled_end < ?)
 		    OR (state IN ('NO_MATCH', 'EXPIRED') AND update_time < ?)`,
 	)
 		.bind(cutoff, cutoff)
-		.all<{ id: string }>();
+		.all<{ id: string; calendar_event_id: string | null }>();
 	for (const d of old) {
+		// Quietly remove the past meeting from Neutra's own calendar too; nobody is notified.
+		if (d.calendar_event_id) await deleteEvent(env, d.calendar_event_id, false).catch(() => {});
 		await env.DB.batch([
 			env.DB.prepare("DELETE FROM answers WHERE decision_id = ?").bind(d.id),
 			env.DB.prepare("DELETE FROM decisions WHERE id = ?").bind(d.id),

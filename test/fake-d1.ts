@@ -17,11 +17,13 @@ class Statement {
 	async all<T>(): Promise<{ results: T[] }> {
 		return { results: this.db.prepare(this.sql).all(...this.params) as T[] };
 	}
+	// Shaped like D1's result, so code can check meta.changes.
 	async run() {
-		return this.db.prepare(this.sql).run(...this.params);
+		return this.runSync();
 	}
 	runSync() {
-		return this.db.prepare(this.sql).run(...this.params);
+		const info = this.db.prepare(this.sql).run(...this.params);
+		return { success: true, meta: { changes: info.changes } };
 	}
 }
 

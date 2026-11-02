@@ -8,6 +8,8 @@ export type Caller = { email: string; name: string; client?: string };
 export type Interval = { startTime: string; endTime: string };
 
 export type State = "WAITING" | "NO_MATCH" | "INVITE_SENT" | "ACCEPTED" | "DECLINED" | "EXPIRED";
+// Internal only: an answer is being processed. Shown to callers as WAITING.
+type StoredState = State | "MATCHING";
 
 /** An error with a google.rpc canonical code, as in the API's error table. */
 export type ErrorCode = "NOT_FOUND" | "PERMISSION_DENIED" | "FAILED_PRECONDITION" | "INVALID_ARGUMENT" | "RESOURCE_EXHAUSTED";
@@ -25,7 +27,7 @@ type DecisionRow = {
 	starter_email: string;
 	starter_name: string;
 	duration_seconds: number;
-	state: State;
+	state: StoredState;
 	code_hash: string;
 	code_used: number;
 	responder_email: string | null;
@@ -55,6 +57,7 @@ const MAX_DAYS_AHEAD = 30;
 const MIN_LEAD_MS = 60 * 60 * 1000; // a matched meeting starts at least 1 hour from now
 const SLOT_MS = 15 * 60 * 1000; // matched times start on a quarter hour
 const MAX_DURATION_S = 24 * 60 * 60;
+const MIN_DURATION_S = 15 * 60;
 const MAX_ANSWERS = 3; // the responder's first answer plus 2 retries after "no match"
 const MIN_BREADTH = 2; // every answer must cover at least twice the meeting duration
 
@@ -76,9 +79,9 @@ function same(a: string, b: string): boolean {
 }
 
 function parseDuration(duration: string): number {
-	const seconds = Number(duration.slice(0, -1));
-	if (!Number.isInteger(seconds) || seconds <= 0 || seconds > MAX_DURATION_S) {
-		throw new ApiError("INVALID_ARGUMENT", "Duration must be between 1 second and 24 hours, e.g. \"3600s\".");
+	const seconds = /^\d+s$/.test(duration) ? Number(duration.slice(0, -1)) : Number.NaN;
+	if (!Number.isInteger(seconds) || seconds < MIN_DURATION_S || seconds > MAX_DURATION_S) {
+		throw new ApiError("INVALID_ARGUMENT", 'Duration must be between 15 minutes and 24 hours, in seconds, e.g. "3600s".');
 	}
 	return seconds;
 }
@@ -141,8 +144,15 @@ function coverage(windows: { start: number; end: number }[]): number {
 }
 
 // Narrow answers would let repeated tries map the other person's free times.
-function requireBreadth(windows: { start: number; end: number }[], durationSeconds: number): void {
-	if (coverage(windows) < MIN_BREADTH * durationSeconds * 1000) {
+// Only time where a meeting could actually happen counts: from an hour from now to the 30-day limit,
+// in pieces at least as long as the meeting. Otherwise past or tiny windows would pad the total.
+function requireBreadth(windows: { start: number; end: number }[], durationSeconds: number, now: number): void {
+	const from = now + MIN_LEAD_MS;
+	const to = now + MAX_DAYS_AHEAD * 24 * 60 * 60 * 1000;
+	const usable = windows
+		.map((w) => ({ start: Math.max(w.start, from), end: Math.min(w.end, to) }))
+		.filter((w) => w.end - w.start >= durationSeconds * 1000);
+	if (coverage(usable) < MIN_BREADTH * durationSeconds * 1000) {
 		throw new ApiError(
 			"INVALID_ARGUMENT",
 			`The windows must cover at least ${MIN_BREADTH} times the meeting duration in total. Offer more of the times you're free.`,
@@ -194,8 +204,12 @@ async function answersOf(env: Env, id: string): Promise<AnswerRow[]> {
 	return results;
 }
 
-async function setState(env: Env, id: string, state: State, now: number): Promise<void> {
-	await env.DB.prepare("UPDATE decisions SET state = ?, update_time = ? WHERE id = ?").bind(state, iso(now), id).run();
+/** Moves a decision on only if no one else moved it first. */
+async function setState(env: Env, id: string, from: StoredState, state: StoredState, now: number): Promise<boolean> {
+	const result = await env.DB.prepare("UPDATE decisions SET state = ?, update_time = ? WHERE id = ? AND state = ?")
+		.bind(state, iso(now), id, from)
+		.run();
+	return result.meta.changes === 1;
 }
 
 /** Brings a decision up to date: expiry, and the invite replies from the calendar. */
@@ -206,9 +220,10 @@ async function refresh(
 ): Promise<{ row: DecisionRow; replies: Map<string, InviteReply> }> {
 	let replies = new Map<string, InviteReply>();
 	if (row.state === "WAITING" && now > Date.parse(row.expire_time)) {
-		await setState(env, row.id, "EXPIRED", now);
-		await env.DB.prepare("UPDATE answers SET windows_json = '[]' WHERE decision_id = ?").bind(row.id).run();
-		await recordEvent(env, { type: "decision_expired", decisionRef: row.stats_ref, detail: { answered: !!row.responder_email } });
+		if (await setState(env, row.id, "WAITING", "EXPIRED", now)) {
+			await env.DB.prepare("UPDATE answers SET windows_json = '[]' WHERE decision_id = ?").bind(row.id).run();
+			await recordEvent(env, { type: "decision_expired", decisionRef: row.stats_ref, detail: { answered: !!row.responder_email } });
+		}
 		row = { ...row, state: "EXPIRED", update_time: iso(now) };
 	}
 	if (row.calendar_event_id && (row.state === "INVITE_SENT" || row.state === "ACCEPTED" || row.state === "DECLINED")) {
@@ -219,8 +234,7 @@ async function refresh(
 			: all.length > 0 && all.every((r) => r === "ACCEPTED")
 				? "ACCEPTED"
 				: "INVITE_SENT";
-		if (next !== row.state) {
-			await setState(env, row.id, next, now);
+		if (next !== row.state && (await setState(env, row.id, row.state, next, now))) {
 			if (next !== "INVITE_SENT") {
 				await recordEvent(env, { type: "invite_reply", decisionRef: row.stats_ref, detail: { state: next } });
 			}
@@ -259,7 +273,7 @@ function view(
 			role: a.role,
 			...(replies.size ? { inviteReply: replies.get(a.author_email.toLowerCase()) ?? "NEEDS_ACTION" } : {}),
 		})),
-		state: row.state,
+		state: (row.state === "MATCHING" ? "WAITING" : row.state) as State,
 		...(isResponder && row.state === "WAITING" ? { remainingAttempts: MAX_ANSWERS - row.attempts } : {}),
 		// The code is shown only to the starter, only at creation (it is stored hashed).
 		...(isStarter && code
@@ -268,7 +282,8 @@ function view(
 					handoffMessage,
 				}
 			: {}),
-		expireTime: row.expire_time,
+		// Only the starter sees the deadline: it is derived from the starter's own times.
+		...(isStarter ? { expireTime: row.expire_time } : {}),
 		createTime: row.create_time,
 		updateTime: row.update_time,
 	};
@@ -283,7 +298,7 @@ export async function createDecision(
 	await checkCreateDecision(env, caller.email, now);
 	const durationSeconds = parseDuration(request.durationSeconds);
 	const windows = parseWindows(request.starterWindows, now, request.timeZone);
-	requireBreadth(windows, durationSeconds);
+	requireBreadth(windows, durationSeconds, now);
 	const lastStart = Math.max(...windows.map((w) => w.end)) - durationSeconds * 1000;
 	if (lastStart < now + MIN_LEAD_MS) {
 		throw new ApiError("INVALID_ARGUMENT", "None of the windows leaves room for the meeting at least an hour from now.");
@@ -407,25 +422,42 @@ export async function createAnswer(
 	const now = Date.now();
 	const id = idFromName(request.parent);
 	const loaded = await load(env, id);
-	const { row } = await refresh(env, loaded, now);
-	if (same(row.starter_email, caller.email)) {
+	// Check who is calling before doing anything else with the decision.
+	if (same(loaded.starter_email, caller.email)) {
 		throw new ApiError("PERMISSION_DENIED", "The starter already answered when creating the decision.");
 	}
-	if ((await sha256(request.code.trim().toLowerCase())) !== row.code_hash) {
+	if ((await sha256(request.code.trim().toLowerCase())) !== loaded.code_hash) {
 		throw new ApiError("PERMISSION_DENIED", "The code is wrong.");
 	}
 	// The code binds to the first person who answers with it.
-	if (row.responder_email && !same(row.responder_email, caller.email)) {
+	if (loaded.responder_email && !same(loaded.responder_email, caller.email)) {
 		throw new ApiError("PERMISSION_DENIED", "This code is already used by someone else.");
+	}
+	const { row } = await refresh(env, loaded, now);
+	if (row.state === "MATCHING") {
+		throw new ApiError("FAILED_PRECONDITION", "Another answer to this decision is being processed. Try again in a moment.");
 	}
 	if (row.state !== "WAITING" || row.code_used) {
 		throw new ApiError("FAILED_PRECONDITION", `The decision is ${row.state}, not WAITING.`);
 	}
 	const windows = parseWindows(request.windows, now, request.timeZone);
-	requireBreadth(windows, row.duration_seconds);
+	requireBreadth(windows, row.duration_seconds, now);
 	await checkCreateAnswer(env, caller.email, row.starter_email, id, now);
 	const starter = (await answersOf(env, id)).find((a) => a.role === "STARTER");
 	if (!starter) throw new ApiError("FAILED_PRECONDITION", "The decision has no starter answer.");
+
+	// Claim the decision for this answer. Only one answer at a time gets past this,
+	// so parallel calls can't send two invites or get around the try limit.
+	const claim = await env.DB.prepare(
+		"UPDATE decisions SET state = 'MATCHING', responder_email = ?, attempts = attempts + 1, update_time = ? WHERE id = ? AND state = 'WAITING' AND code_used = 0 AND attempts = ?",
+	)
+		.bind(caller.email, iso(now), id, row.attempts)
+		.run();
+	if (claim.meta.changes !== 1) {
+		throw new ApiError("FAILED_PRECONDITION", "Another answer to this decision is being processed. Try again in a moment.");
+	}
+	const release = () =>
+		env.DB.prepare("UPDATE decisions SET state = 'WAITING', attempts = attempts - 1 WHERE id = ? AND state = 'MATCHING'").bind(id).run();
 
 	const attempts = row.attempts + 1;
 	const answer: AnswerRow = {
@@ -442,12 +474,18 @@ export async function createAnswer(
 
 	let next: DecisionRow = { ...row, responder_email: caller.email, attempts, update_time: iso(now) };
 	if (match) {
-		const eventId = await createEvent(env, {
-			summary: `${row.starter_name} & ${caller.name}`,
-			start: iso(match.start),
-			end: iso(match.end),
-			attendees: [row.starter_email, caller.email],
-		});
+		let eventId: string;
+		try {
+			eventId = await createEvent(env, {
+				summary: `${row.starter_name} & ${caller.name}`,
+				start: iso(match.start),
+				end: iso(match.end),
+				attendees: [row.starter_email, caller.email],
+			});
+		} catch (error) {
+			await release();
+			throw error;
+		}
 		next = {
 			...next,
 			state: "INVITE_SENT",
@@ -458,30 +496,29 @@ export async function createAnswer(
 		};
 	} else if (attempts >= MAX_ANSWERS) {
 		next = { ...next, state: "NO_MATCH", code_used: 1 };
+	} else {
+		next = { ...next, state: "WAITING" };
 	}
 	const settled = next.state !== "WAITING";
 
-	await env.DB.batch([
-		env.DB.prepare("DELETE FROM answers WHERE decision_id = ? AND role = 'RESPONDER'").bind(id),
-		env.DB.prepare(
-			"INSERT INTO answers (id, decision_id, author_email, author_name, role, windows_json, time_zone, create_time) VALUES (?, ?, ?, ?, ?, '[]', ?, ?)",
-		).bind(answer.id, id, answer.author_email, answer.author_name, answer.role, answer.time_zone, answer.create_time),
-		// Once settled, the starter's times go too.
-		...(settled ? [env.DB.prepare("UPDATE answers SET windows_json = '[]' WHERE decision_id = ?").bind(id)] : []),
-		env.DB.prepare(
-			"UPDATE decisions SET state = ?, code_used = ?, responder_email = ?, attempts = ?, scheduled_start = ?, scheduled_end = ?, calendar_event_id = ?, update_time = ? WHERE id = ?",
-		).bind(
-			next.state,
-			next.code_used,
-			next.responder_email,
-			next.attempts,
-			next.scheduled_start,
-			next.scheduled_end,
-			next.calendar_event_id,
-			next.update_time,
-			id,
-		),
-	]);
+	try {
+		await env.DB.batch([
+			env.DB.prepare("DELETE FROM answers WHERE decision_id = ? AND role = 'RESPONDER'").bind(id),
+			env.DB.prepare(
+				"INSERT INTO answers (id, decision_id, author_email, author_name, role, windows_json, time_zone, create_time) VALUES (?, ?, ?, ?, ?, '[]', ?, ?)",
+			).bind(answer.id, id, answer.author_email, answer.author_name, answer.role, answer.time_zone, answer.create_time),
+			// Once settled, the starter's times go too.
+			...(settled ? [env.DB.prepare("UPDATE answers SET windows_json = '[]' WHERE decision_id = ?").bind(id)] : []),
+			env.DB.prepare(
+				"UPDATE decisions SET state = ?, code_used = ?, scheduled_start = ?, scheduled_end = ?, calendar_event_id = ?, update_time = ? WHERE id = ? AND state = 'MATCHING'",
+			).bind(next.state, next.code_used, next.scheduled_start, next.scheduled_end, next.calendar_event_id, next.update_time, id),
+		]);
+	} catch (error) {
+		// Don't leave an invite Neutra doesn't know about.
+		if (next.calendar_event_id) await deleteEvent(env, next.calendar_event_id).catch(() => {});
+		await release();
+		throw error;
+	}
 
 	await recordEvent(env, {
 		type: "answer_submitted",

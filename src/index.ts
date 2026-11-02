@@ -15,6 +15,7 @@ import {
 import { recordEvent } from "./events";
 import { createFeatureRequest, getFeatureRequest } from "./feedback";
 import { GoogleHandler } from "./google-handler";
+import { isAllowed } from "./utils";
 import { nextStep, SERVER_INSTRUCTIONS } from "./guidance";
 import { runMaintenance } from "./maintenance";
 
@@ -59,6 +60,10 @@ function fail(error: unknown) {
 
 async function run(tool: string, caller: Caller | undefined, action: (caller: Caller) => Promise<unknown>) {
 	if (!caller) return fail(new ApiError("PERMISSION_DENIED", "Sign in to use Neutra."));
+	// Checked on every call, so removing someone from the allowlist takes effect at once.
+	if (env.ACCESS_MODE !== "open" && !isAllowed(caller.email, env.ALLOWED_EMAILS)) {
+		return fail(new ApiError("PERMISSION_DENIED", "Neutra is in private testing, and this account isn't on the list yet."));
+	}
 	try {
 		const result = await action(caller);
 		console.log(JSON.stringify({ tool, outcome: "ok" }));

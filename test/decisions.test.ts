@@ -199,6 +199,57 @@ describe("create_answer", () => {
 	});
 });
 
+describe("security", () => {
+	it("doesn't let past or too-short windows pad an answer past the breadth rule", async () => {
+		const decision = await start();
+		const padded = [
+			window("2026-08-01T00:00:00Z", "2026-11-03T08:30:00Z"), // mostly in the past
+			window("2026-11-04T18:15:00Z", "2026-11-04T19:15:00Z"), // exactly one slot: a probe
+		];
+		await rejects(createAnswer(env, ben, { parent: decision.name, code: decision.code!, windows: padded }), "INVALID_ARGUMENT");
+		const crumbs = Array.from({ length: 8 }, (_, i) =>
+			window(`2026-11-05T${String(10 + i).padStart(2, "0")}:00:00Z`, `2026-11-05T${String(10 + i).padStart(2, "0")}:30:00Z`),
+		);
+		await rejects(createAnswer(env, ben, { parent: decision.name, code: decision.code!, windows: crumbs }), "INVALID_ARGUMENT");
+	});
+
+	it("sends one invite when two answers arrive at the same moment", async () => {
+		const decision = await start();
+		const results = await Promise.allSettled([
+			createAnswer(env, ben, { parent: decision.name, code: decision.code!, windows: benFree }),
+			createAnswer(env, ben, { parent: decision.name, code: decision.code!, windows: benFree }),
+		]);
+		expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(1);
+		expect(google.events.size).toBe(1);
+	});
+
+	it("counts parallel tries, so the limit of 3 holds", async () => {
+		const decision = await start();
+		const tries = () => createAnswer(env, ben, { parent: decision.name, code: decision.code!, windows: benBusyThen });
+		await Promise.allSettled([tries(), tries(), tries(), tries(), tries()]);
+		await Promise.allSettled([tries(), tries(), tries(), tries(), tries()]);
+		await Promise.allSettled([tries(), tries(), tries(), tries(), tries()]);
+		expect((await getDecision(env, anna, decision.name)).state).toBe("NO_MATCH");
+		await rejects(tries(), "FAILED_PRECONDITION");
+	});
+
+	it("doesn't show the starter's deadline to the other person", async () => {
+		const decision = await start();
+		const { decision: after } = await createAnswer(env, ben, { parent: decision.name, code: decision.code!, windows: benBusyThen });
+		expect(after).not.toHaveProperty("expireTime");
+		expect(await getDecision(env, anna, decision.name)).toHaveProperty("expireTime");
+	});
+
+	it("refuses durations without seconds, under 15 minutes, and dates that don't exist", async () => {
+		await rejects(createDecision(env, anna, { durationSeconds: "3600", starterWindows: annaFree }), "INVALID_ARGUMENT");
+		await rejects(createDecision(env, anna, { durationSeconds: "600s", starterWindows: annaFree }), "INVALID_ARGUMENT");
+		await rejects(
+			createDecision(env, anna, { durationSeconds: "3600s", starterWindows: [window("2026-11-31T17:00:00Z", "2026-11-31T20:00:00Z")] }),
+			"INVALID_ARGUMENT",
+		);
+	});
+});
+
 describe("time zones", () => {
 	it("accepts local times with a zone and echoes back what it understood", async () => {
 		const decision = await createDecision(env, anna, {

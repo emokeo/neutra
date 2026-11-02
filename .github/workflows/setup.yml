@@ -4,6 +4,11 @@ name: One-time Cloudflare setup
 # and reports their IDs as annotations so they can go into wrangler.jsonc.
 on:
   workflow_dispatch:
+    inputs:
+      recreate_d1:
+        description: "Delete the existing 'neutra' D1 database first (only while it is empty)"
+        type: boolean
+        default: false
 
 jobs:
   setup:
@@ -20,7 +25,12 @@ jobs:
         shell: bash {0}
         run: |
           report() { tr '\n' ' ' < "$1" | sed 's/\x1b\[[0-9;]*m//g' | cut -c1-600; }
-          npx wrangler d1 create neutra > d1.log 2>&1
+          if [ "${{ inputs.recreate_d1 }}" = "true" ]; then
+            npx wrangler d1 delete neutra -y > d1del.log 2>&1
+            echo "::notice::d1 delete: $(report d1del.log)"
+          fi
+          # EU jurisdiction: the data stays in the EU.
+          npx wrangler d1 create neutra --jurisdiction eu > d1.log 2>&1
           echo "::notice::d1 create: $(report d1.log)"
           npx wrangler d1 list --json > d1.json 2> d1.err
           echo "::notice::d1 list: $(report d1.json) $(report d1.err)"

@@ -17,7 +17,7 @@ import {
 
 const app = new Hono<{ Bindings: Env & { OAUTH_PROVIDER: OAuthHelpers } }>();
 
-app.get("/", () => homePage());
+app.get("/", (c) => homePage(c.env.MCP_RESOURCE));
 app.get("/privacy", () => privacyPage());
 
 // The link in a hand-off message. Counts "message opened" (link previews and bots excluded).
@@ -32,7 +32,7 @@ app.get("/r/:id", async (c) => {
 	if (row && !/bot|crawl|spider|preview|facebookexternalhit|whatsapp|slack|telegram|twitter|discord|linkedin|skype/i.test(agent)) {
 		c.executionCtx.waitUntil(recordEvent(c.env, { type: "handoff_opened", decisionRef: row.stats_ref }));
 	}
-	return requestPage(row?.starter_name ?? null);
+	return requestPage(row?.starter_name ?? null, c.env.MCP_RESOURCE);
 });
 
 app.get("/authorize", async (c) => {

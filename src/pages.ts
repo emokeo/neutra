@@ -23,7 +23,7 @@ ${body}
 	return new Response(html, { headers: { "Content-Type": "text/html; charset=utf-8" } });
 }
 
-export function homePage(): Response {
+export function homePage(connectorUrl: string): Response {
 	return page(
 		"Neutra",
 		`<h1>Neutra</h1>
@@ -34,7 +34,7 @@ export function homePage(): Response {
 <p>Paste the quoted line from the message into your AI assistant and add when you're free. That's it. The first time, your assistant asks you to sign in with Google: Neutra only uses your name and email, to send you the invite.</p>
 
 <h2>Add Neutra to your assistant</h2>
-<p>Connector address: <code>https://neutra.neutra-dev.workers.dev/mcp</code></p>
+<p>Connector address: <code>${connectorUrl}</code></p>
 <ul>
 <li><strong>Claude:</strong> Settings → Connectors → Add custom connector → paste the address → choose <em>Register automatically</em> → sign in with Google.</li>
 <li><strong>Muse:</strong> Settings → Connectors → Add custom connector → paste the address → sign in. Or ask Muse in chat to connect to it.</li>
@@ -49,7 +49,7 @@ export function homePage(): Response {
 }
 
 /** The page behind the link in a hand-off message: what this is and how to answer. */
-export function requestPage(starterName: string | null): Response {
+export function requestPage(starterName: string | null, connectorUrl: string): Response {
 	const who = starterName ? starterName.split(/\s+/)[0] : "Someone";
 	return page(
 		"Neutra · Answer a request",
@@ -57,7 +57,7 @@ export function requestPage(starterName: string | null): Response {
 <p>Neutra finds a time that works for both of you, <strong>without either of you sharing your calendar</strong>. When it finds one, you both get a calendar invite. No AI on Neutra's side sees your times.</p>
 
 <h2>1. Add Neutra to your assistant (once)</h2>
-<p>Connector address: <code>https://neutra.neutra-dev.workers.dev/mcp</code></p>
+<p>Connector address: <code>${connectorUrl}</code></p>
 <ul>
 <li><strong>Claude:</strong> Settings → Connectors → Add custom connector → paste the address → <em>Register automatically</em> → sign in with Google.</li>
 <li><strong>Muse:</strong> Settings → Connectors → Add custom connector → paste the address → sign in.</li>

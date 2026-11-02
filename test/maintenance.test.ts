@@ -116,6 +116,24 @@ describe("retention", () => {
 	});
 });
 
+describe("invite replies", () => {
+	it("cancels a declined meeting for both, even if no assistant asks", async () => {
+		const decision = await start();
+		await createAnswer(env, ben, { parent: decision.name, code: decision.code!, windows: benFree });
+		const [eventId] = [...google.events.keys()];
+		google.reply(eventId, ben.email, "declined");
+		expect(await runMaintenance(env, at("2026-11-03T09:00:00Z"))).toMatchObject({ synced: 1 });
+		expect(google.events.size).toBe(0);
+		expect((db.db.prepare("SELECT state FROM decisions").get() as { state: string }).state).toBe("DECLINED");
+	});
+
+	it("leaves meetings that already started alone", async () => {
+		const decision = await start();
+		await createAnswer(env, ben, { parent: decision.name, code: decision.code!, windows: benFree });
+		expect(await runMaintenance(env, at("2026-11-04T18:30:00Z"))).toMatchObject({ synced: 0 });
+	});
+});
+
 describe("answers that stopped mid-way", () => {
 	it("puts an old-style stuck answer back to WAITING", async () => {
 		const decision = await start();

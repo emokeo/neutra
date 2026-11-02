@@ -45,7 +45,7 @@ A remote MCP server with Google sign-in. Resources follow [Google's AIPs](https:
 | Tool | What it does |
 | --- | --- |
 | `create_decision` | Start a decision with your person's free times and the meeting length. Returns a code and a message to forward. |
-| `create_answer` | Answer with the decision name, the code and your person's free times. A match sends the invite. |
+| `create_answer` | Answer with the code from the message (`neutra:<id>.<code>`) and your person's free times. A match sends the invite. |
 | `get_decision` | Status (`WAITING`, `NO_MATCH`, `INVITE_SENT`, `ACCEPTED`, `DECLINED`, `EXPIRED`) and the meeting time. |
 | `delete_decision` | Cancel a decision you started, including its invite. |
 | `get_answer` | Read your own answer. |

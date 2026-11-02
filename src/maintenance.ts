@@ -1,6 +1,6 @@
 // Runs every 15 minutes: finishes stopped answers, expires decisions, tells starters when nothing worked out, and deletes old data.
 import { eventExists, sendEmail } from "./calendar";
-import { MAX_ANSWERS } from "./decisions";
+import { MAX_ANSWERS, syncDecision } from "./decisions";
 import { recordEvent } from "./events";
 import { formatDay } from "./time";
 
@@ -47,7 +47,7 @@ Neutra`,
 
 export async function runMaintenance(env: Env, now = Date.now()) {
 	const nowIso = new Date(now).toISOString();
-	const result = { recovered: 0, expired: 0, notified: 0, deleted: 0 };
+	const result = { recovered: 0, expired: 0, synced: 0, notified: 0, deleted: 0 };
 
 	// 0. Answers that stopped mid-way (MATCHING for over 5 minutes). If the invite went out, finish the
 	// answer; if not, the request opens again. The try stays counted (see createAnswer); after the last
@@ -99,6 +99,24 @@ export async function runMaintenance(env: Env, now = Date.now()) {
 		]);
 		await recordEvent(env, { type: "decision_expired", decisionRef: d.stats_ref, detail: { answered: !!d.responder_email } });
 		result.expired++;
+	}
+
+	// 1b. Invite replies for upcoming meetings, so a "no" cancels the meeting for both even if no assistant asks.
+	// Also retries cancels that failed. Soonest meetings first, at most 50 per run.
+	const { results: invited } = await env.DB.prepare(
+		`SELECT id FROM decisions WHERE calendar_event_id IS NOT NULL
+		   AND ((state IN ('INVITE_SENT', 'ACCEPTED') AND scheduled_start > ?) OR state = 'DECLINED')
+		 ORDER BY scheduled_start LIMIT 50`,
+	)
+		.bind(nowIso)
+		.all<{ id: string }>();
+	for (const d of invited) {
+		try {
+			await syncDecision(env, d.id, now);
+			result.synced++;
+		} catch (error) {
+			console.error("sync failed", d.id, error);
+		}
 	}
 
 	// 2. Delete everything about decisions that ended more than RETENTION_DAYS ago.

@@ -209,6 +209,22 @@ describe("combined code", () => {
 		expect(after.state).toBe("INVITE_SENT");
 	});
 
+	it("accepts the code with quotes or a full stop pasted along", async () => {
+		const decision = await start();
+		const combined = `neutra:${decision.name.split("/")[1]}.${decision.code}`;
+		const { decision: after } = await createAnswer(env, ben, { code: `"${combined}."`, windows: benFree });
+		expect(after.state).toBe("INVITE_SENT");
+	});
+
+	it("says clearly when a pasted code is cut off", async () => {
+		const decision = await start();
+		const cut = `neutra:${decision.name.split("/")[1]}.${decision.code!.slice(0, 6)}`;
+		await expect(createAnswer(env, ben, { code: cut, windows: benFree })).rejects.toMatchObject({
+			code: "INVALID_ARGUMENT",
+			message: expect.stringContaining("incomplete"),
+		});
+	});
+
 	it("refuses a combined code that doesn't match the decision name", async () => {
 		const decision = await start();
 		const other = await start();
@@ -394,6 +410,21 @@ describe("when Google or the database fails", () => {
 		await rejects(createAnswer(env, ben, { parent: decision.name, code: decision.code!, windows: benFree }), "FAILED_PRECONDITION");
 		expect(google.events.size).toBe(0);
 		expect((await getDecision(env, anna, decision.name)).state).toBe("WAITING");
+	});
+});
+
+describe("decline", () => {
+	it("retries the cancel when Google fails the first time", async () => {
+		const decision = await start();
+		await createAnswer(env, ben, { parent: decision.name, code: decision.code!, windows: benFree });
+		const [eventId] = [...google.events.keys()];
+		google.reply(eventId, ben.email, "declined");
+		google.failures.delete = true;
+		expect((await getDecision(env, anna, decision.name)).state).toBe("DECLINED");
+		expect(google.events.size).toBe(1);
+		google.failures.delete = false;
+		expect((await getDecision(env, anna, decision.name)).state).toBe("DECLINED");
+		expect(google.events.size).toBe(0);
 	});
 });
 

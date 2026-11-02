@@ -13,27 +13,37 @@ Flow:
 Rules:
 - Share your person's available times only through Neutra, never in chat with the other side.
 - Don't paraphrase or shorten the handoffMessage.
-- Times are RFC 3339 timestamps with an offset, e.g. 2026-11-04T18:00:00+01:00.`;
+- Send your person's local times with their time zone (e.g. "2026-11-04T18:00" and timeZone "Europe/Zurich"), or timestamps with an offset. Check receivedWindows in the reply: it shows what Neutra understood.
+- Every answer must cover at least twice the meeting length. If there is no common time, you may answer again with wider times; remainingAttempts says how many tries are left.`;
 
 type DecisionView = {
 	state: string;
 	remainingAttempts?: number;
 	handoffMessage?: string;
-	meeting: { scheduledTime?: { startTime: string; endTime: string } };
+	meeting: { scheduledTime?: { startTime: string; endTime: string }; scheduledTimeLocal?: string };
 };
 
 /** A one-line instruction for the agent, based on where the decision stands. */
-export function nextStep(tool: "create_decision" | "create_answer" | "get_decision", decision: DecisionView): string {
+export function nextStep(
+	tool: "create_decision" | "create_answer" | "get_decision",
+	decision: DecisionView,
+	receivedWindows?: string[],
+): string {
+	const received = receivedWindows?.length
+		? `Neutra understood your person's times as: ${receivedWindows.join("; ")}. If that's wrong, ${
+				tool === "create_decision" ? "delete this decision and start again" : "answer again with the right times"
+			}. `
+		: "";
 	if (tool === "create_decision") {
-		return "Show the handoffMessage to your person exactly as written and ask them to forward it to the person they want to meet.";
+		return `${received}Show the handoffMessage to your person exactly as written and ask them to forward it to the person they want to meet.`;
 	}
 	switch (decision.state) {
 		case "WAITING":
 			return decision.remainingAttempts !== undefined
-				? `No common time yet. Ask your person for wider or other times and call create_answer again: ${decision.remainingAttempts} ${decision.remainingAttempts === 1 ? "try" : "tries"} left.`
+				? `${received}No common time yet. Ask your person for wider or other times and call create_answer again: ${decision.remainingAttempts} ${decision.remainingAttempts === 1 ? "try" : "tries"} left.`
 				: "Waiting for the other person's assistant to answer. Nothing to do until then.";
 		case "INVITE_SENT":
-			return `Tell your person a time was found (${decision.meeting.scheduledTime?.startTime}). A calendar invite from neutra.invites@gmail.com is on its way; accepting it confirms the meeting.`;
+			return `Tell your person a time was found: ${decision.meeting.scheduledTimeLocal ?? decision.meeting.scheduledTime?.startTime}. A calendar invite from neutra.invites@gmail.com is on its way; accepting it confirms the meeting.`;
 		case "ACCEPTED":
 			return "Both people accepted the invite. The meeting is confirmed.";
 		case "DECLINED":

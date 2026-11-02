@@ -22,10 +22,14 @@ export type Props = {
 };
 
 // google.type.Interval, as JSON.
-const Interval = z.object({
-	startTime: z.string().datetime({ offset: true }).describe("RFC 3339 timestamp with offset"),
-	endTime: z.string().datetime({ offset: true }).describe("RFC 3339 timestamp with offset"),
-});
+const Timestamp = z
+	.string()
+	.describe('Local time like "2026-11-04T18:00" (read in timeZone), or RFC 3339 with an offset like "2026-11-04T18:00:00+01:00"');
+const Interval = z.object({ startTime: Timestamp, endTime: Timestamp });
+const TimeZone = z
+	.string()
+	.optional()
+	.describe('Your person\'s IANA time zone, e.g. "Europe/Zurich". Required for local times; also used to show times back to them.');
 
 const AvailableWindows = z
 	.array(Interval)
@@ -70,12 +74,12 @@ function createServer() {
 		{
 			title: "Start finding a meeting time",
 			description:
-				"Use this when your person wants to meet someone and you need to agree on a time. Send your person's available windows (together at least twice the meeting duration) and the duration. Returns a code and a handoffMessage for your person to forward; the other person's assistant answers with create_answer. Nobody ever sees the other person's times.",
+				"Start finding a meeting time with someone. Send your person's free times and the meeting length; returns a message to forward.",
 			inputSchema: z.object({
 				decision: z.object({
 					meeting: z.object({ duration: z.string().describe('Seconds, e.g. "3600s"') }),
 				}),
-				starterAnswer: z.object({ meeting: z.object({ availableWindows: AvailableWindows }) }),
+				starterAnswer: z.object({ meeting: z.object({ availableWindows: AvailableWindows, timeZone: TimeZone }) }),
 			}),
 			annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
 		},
@@ -84,8 +88,9 @@ function createServer() {
 				const decision = await createDecision(env, c, {
 					durationSeconds: request.decision.meeting.duration,
 					starterWindows: request.starterAnswer.meeting.availableWindows,
+					timeZone: request.starterAnswer.meeting.timeZone,
 				});
-				return { ...decision, nextStep: nextStep("create_decision", decision) };
+				return { ...decision, nextStep: nextStep("create_decision", decision, decision.receivedWindows) };
 			}),
 	);
 
@@ -94,11 +99,11 @@ function createServer() {
 		{
 			title: "Answer a meeting-time request",
 			description:
-				"Use this when your person received a Neutra message with a decision name and code. Send your person's available windows; together they must cover at least twice the meeting duration. If both people share a time, a calendar invite goes to both right away. If not, the decision stays WAITING and remainingAttempts says how many more answers you may send, so ask your person for wider times. After the last one it ends as NO_MATCH.",
+				"Answer a Neutra request with your person's free times. Neutra compares them privately. If a time fits both, it sends one calendar invite; otherwise, nobody learns anything about the other's times.",
 			inputSchema: z.object({
 				parent: DecisionName,
 				code: z.string().describe("The code from the message the other person forwarded"),
-				answer: z.object({ meeting: z.object({ availableWindows: AvailableWindows }) }),
+				answer: z.object({ meeting: z.object({ availableWindows: AvailableWindows, timeZone: TimeZone }) }),
 			}),
 			// Sends a calendar invite to both people when there is a match.
 			annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
@@ -109,8 +114,9 @@ function createServer() {
 					parent: request.parent,
 					code: request.code,
 					windows: request.answer.meeting.availableWindows,
+					timeZone: request.answer.meeting.timeZone,
 				});
-				return { ...result, nextStep: nextStep("create_answer", result.decision) };
+				return { ...result, nextStep: nextStep("create_answer", result.decision, result.receivedWindows) };
 			}),
 	);
 
@@ -119,7 +125,7 @@ function createServer() {
 		{
 			title: "Check a meeting-time decision",
 			description:
-				"Use this to see where a decision stands: WAITING, NO_MATCH, INVITE_SENT, ACCEPTED, DECLINED or EXPIRED, plus the meeting time and each person's reply to the invite. Participants only.",
+				"Check a decision's status and meeting time.",
 			inputSchema: z.object({ name: DecisionName }),
 			annotations: { readOnlyHint: true, openWorldHint: false },
 		},
@@ -135,7 +141,7 @@ function createServer() {
 		{
 			title: "Delete a meeting-time decision",
 			description:
-				"Use this when your person no longer wants a meeting they started. Deletes the decision: the code stops working, and if an invite was sent, it is cancelled for both people.",
+				"Cancel a decision you started, including its invite.",
 			inputSchema: z.object({ name: DecisionName }),
 			// Cancels the invite for both people if one was sent.
 			annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true },
@@ -151,7 +157,7 @@ function createServer() {
 		"get_answer",
 		{
 			title: "Read your own answer",
-			description: "Read your own answer to a decision. Times are kept only until the decision is settled.",
+			description: "Read your own answer.",
 			inputSchema: z.object({ name: z.string().describe('e.g. "decisions/abc.../answers/xyz..."') }),
 			annotations: { readOnlyHint: true, openWorldHint: false },
 		},

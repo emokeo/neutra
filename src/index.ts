@@ -13,6 +13,7 @@ import {
 	getDecision,
 } from "./decisions";
 import { GoogleHandler } from "./google-handler";
+import { nextStep, SERVER_INSTRUCTIONS } from "./guidance";
 
 // Who the caller is, from Google sign-in. Encrypted inside the auth token.
 export type Props = {
@@ -30,7 +31,7 @@ const AvailableWindows = z
 	.array(Interval)
 	.min(1)
 	.max(50)
-	.describe("Times this person can make it. Never shown to anyone else.");
+	.describe("Times this person can make it, together at least twice the meeting duration. Never shown to anyone else.");
 
 const DecisionName = z.string().describe('The decision\'s name, e.g. "decisions/abc..."');
 
@@ -60,68 +61,84 @@ async function run(tool: string, caller: Caller | undefined, action: (caller: Ca
 }
 
 function createServer() {
-	const server = new McpServer({ name: "Neutra", version: "0.1.0" });
+	const server = new McpServer({ name: "Neutra", version: "0.2.0" }, { instructions: SERVER_INSTRUCTIONS });
 	const props = getMcpAuthContext()?.props as Props | undefined;
 	const caller = props ? { email: props.email, name: props.name } : undefined;
 
 	server.registerTool(
 		"create_decision",
 		{
+			title: "Start finding a meeting time",
 			description:
-				"Start finding a meeting time with one other person. Send your person's available windows and the meeting duration. Returns the decision, a code and a message to forward to the other person; their assistant answers with create_answer. Nobody ever sees the other person's times.",
+				"Use this when your person wants to meet someone and you need to agree on a time. Send your person's available windows (together at least twice the meeting duration) and the duration. Returns a code and a handoffMessage for your person to forward; the other person's assistant answers with create_answer. Nobody ever sees the other person's times.",
 			inputSchema: z.object({
 				decision: z.object({
 					meeting: z.object({ duration: z.string().describe('Seconds, e.g. "3600s"') }),
 				}),
 				starterAnswer: z.object({ meeting: z.object({ availableWindows: AvailableWindows }) }),
 			}),
+			annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
 		},
 		async (request) =>
-			run("create_decision", caller, (c) =>
-				createDecision(env, c, {
+			run("create_decision", caller, async (c) => {
+				const decision = await createDecision(env, c, {
 					durationSeconds: request.decision.meeting.duration,
 					starterWindows: request.starterAnswer.meeting.availableWindows,
-				}),
-			),
+				});
+				return { ...decision, nextStep: nextStep("create_decision", decision) };
+			}),
 	);
 
 	server.registerTool(
 		"create_answer",
 		{
+			title: "Answer a meeting-time request",
 			description:
-				"Answer a decision someone started, using the decision name and code they sent. Send your person's available windows; together they must cover at least twice the meeting duration. If both people share a time, a calendar invite goes to both right away. If not, the decision stays WAITING and remainingAttempts says how many more answers you may send, so ask your person for wider times. After the last one it ends as NO_MATCH.",
+				"Use this when your person received a Neutra message with a decision name and code. Send your person's available windows; together they must cover at least twice the meeting duration. If both people share a time, a calendar invite goes to both right away. If not, the decision stays WAITING and remainingAttempts says how many more answers you may send, so ask your person for wider times. After the last one it ends as NO_MATCH.",
 			inputSchema: z.object({
 				parent: DecisionName,
 				code: z.string().describe("The code from the message the other person forwarded"),
 				answer: z.object({ meeting: z.object({ availableWindows: AvailableWindows }) }),
 			}),
+			// Sends a calendar invite to both people when there is a match.
+			annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
 		},
 		async (request) =>
-			run("create_answer", caller, (c) =>
-				createAnswer(env, c, {
+			run("create_answer", caller, async (c) => {
+				const result = await createAnswer(env, c, {
 					parent: request.parent,
 					code: request.code,
 					windows: request.answer.meeting.availableWindows,
-				}),
-			),
+				});
+				return { ...result, nextStep: nextStep("create_answer", result.decision) };
+			}),
 	);
 
 	server.registerTool(
 		"get_decision",
 		{
+			title: "Check a meeting-time decision",
 			description:
-				"Read a decision's state: WAITING, NO_MATCH, INVITE_SENT, ACCEPTED, DECLINED or EXPIRED, plus the meeting time and each person's reply to the invite. Participants only.",
+				"Use this to see where a decision stands: WAITING, NO_MATCH, INVITE_SENT, ACCEPTED, DECLINED or EXPIRED, plus the meeting time and each person's reply to the invite. Participants only.",
 			inputSchema: z.object({ name: DecisionName }),
+			annotations: { readOnlyHint: true, openWorldHint: false },
 		},
-		async ({ name }) => run("get_decision", caller, (c) => getDecision(env, c, name)),
+		async ({ name }) =>
+			run("get_decision", caller, async (c) => {
+				const decision = await getDecision(env, c, name);
+				return { ...decision, nextStep: nextStep("get_decision", decision) };
+			}),
 	);
 
 	server.registerTool(
 		"delete_decision",
 		{
+			title: "Delete a meeting-time decision",
 			description:
-				"Delete a decision you started. The code stops working, and if an invite was sent, it is cancelled for both people.",
+				"Use this when your person no longer wants a meeting they started. Deletes the decision: the code stops working, and if an invite was sent, it is cancelled for both people.",
 			inputSchema: z.object({ name: DecisionName }),
+			// Cancels the invite for both people if one was sent.
+			annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true },
 		},
 		async ({ name }) =>
 			run("delete_decision", caller, async (c) => {
@@ -133,10 +150,62 @@ function createServer() {
 	server.registerTool(
 		"get_answer",
 		{
+			title: "Read your own answer",
 			description: "Read your own answer to a decision. Times are kept only until the decision is settled.",
 			inputSchema: z.object({ name: z.string().describe('e.g. "decisions/abc.../answers/xyz..."') }),
+			annotations: { readOnlyHint: true, openWorldHint: false },
 		},
 		async ({ name }) => run("get_answer", caller, (c) => getAnswer(env, c, name)),
+	);
+
+	// One-click shortcuts that clients like Claude show to the person.
+	server.registerPrompt(
+		"find_a_time",
+		{
+			title: "Find a time with someone",
+			description: "Start agreeing on a meeting time with another person through Neutra.",
+			argsSchema: z.object({
+				with: z.string().describe("Who you want to meet"),
+				when: z.string().optional().describe("When you're free, in your own words (optional)"),
+			}),
+		},
+		({ with: person, when }) => ({
+			messages: [
+				{
+					role: "user" as const,
+					content: {
+						type: "text" as const,
+						text: `I'd like to meet ${person}. Use Neutra to find a time. ${
+							when
+								? `I'm free: ${when}.`
+								: "Ask me when I'm free, or check my calendar if you can and confirm the times with me."
+						} Then show me the message to forward, exactly as Neutra returns it.`,
+					},
+				},
+			],
+		}),
+	);
+
+	server.registerPrompt(
+		"answer_request",
+		{
+			title: "Answer a Neutra request",
+			description: "Answer a meeting-time request someone sent you through Neutra.",
+			argsSchema: z.object({
+				message: z.string().describe("The Neutra message you received"),
+			}),
+		},
+		({ message }) => ({
+			messages: [
+				{
+					role: "user" as const,
+					content: {
+						type: "text" as const,
+						text: `Someone sent me this Neutra request:\n\n${message}\n\nAsk me when I'm free, or check my calendar if you can and confirm the times with me, then answer it with Neutra.`,
+					},
+				},
+			],
+		}),
 	);
 
 	return server;

@@ -443,8 +443,6 @@ export async function createAnswer(
 	if (loaded.responder_email && !same(loaded.responder_email, caller.email)) {
 		throw new ApiError("PERMISSION_DENIED", "This code is already used by someone else.");
 	}
-	const windows = parseWindows(request.windows, now, request.timeZone);
-	requireBreadth(windows, loaded.duration_seconds, now);
 	const { row } = await refresh(env, loaded, now);
 	if (row.state === "MATCHING") {
 		throw new ApiError("FAILED_PRECONDITION", "Another answer to this decision is being processed. Try again in a moment.");
@@ -452,6 +450,8 @@ export async function createAnswer(
 	if (row.state !== "WAITING" || row.code_used || row.attempts >= MAX_ANSWERS) {
 		throw new ApiError("FAILED_PRECONDITION", `The decision is ${row.state}, not WAITING.`);
 	}
+	const windows = parseWindows(request.windows, now, request.timeZone);
+	requireBreadth(windows, row.duration_seconds, now);
 	await checkCreateAnswer(env, caller.email, row.starter_email, id, now);
 	const starter = (await answersOf(env, id)).find((a) => a.role === "STARTER");
 	if (!starter) throw new ApiError("FAILED_PRECONDITION", "The decision has no starter answer.");

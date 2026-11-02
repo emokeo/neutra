@@ -1,6 +1,6 @@
 // Decisions and answers: storage, matching and the rules from the v0 API.
 import { createEvent, deleteEvent, getReplies, type InviteReply } from "./calendar";
-import { formatRange, isValidTimeZone, parseTimestamp } from "./time";
+import { formatDay, formatRange, isValidTimeZone, parseTimestamp } from "./time";
 
 export type Caller = { email: string; name: string };
 export type Interval = { startTime: string; endTime: string };
@@ -103,6 +103,26 @@ function parseWindows(windows: Interval[], now: number, timeZone?: string): { st
 	});
 }
 
+/** The message the starter forwards. Plain text, so it reads well in any chat app. */
+export function handoffMessage(p: {
+	starterName: string;
+	decisionName: string;
+	code: string;
+	connectorUrl: string;
+	expires: string;
+}): string {
+	const home = p.connectorUrl.replace(/\/mcp$/, "").replace(/^https?:\/\//, "");
+	return `${p.starterName} would like to meet you. 👋
+Neutra finds a time that works for both of you, without either of you sharing your calendar. When it finds one, you both get a calendar invite.
+
+To answer, paste this to your AI assistant:
+"Connect the Neutra connector at ${p.connectorUrl}, then answer Neutra request ${p.decisionName} with code ${p.code}. I'm free: …"
+
+The first time, your assistant asks you to sign in with Google. Neutra only uses your name and email, to send you the invite. No AI on Neutra's side sees your times.
+
+If your assistant can't add connectors from chat, add it once under Settings → Connectors. Works until ${p.expires} · ${home}`;
+}
+
 /** Total time covered by the windows, counting overlaps once. */
 function coverage(windows: { start: number; end: number }[]): number {
 	const sorted = [...windows].sort((a, b) => a.start - b.start);
@@ -202,7 +222,14 @@ async function refresh(
 	return { row, replies };
 }
 
-function view(row: DecisionRow, answers: AnswerRow[], replies: Map<string, InviteReply>, caller: Caller, code?: string) {
+function view(
+	row: DecisionRow,
+	answers: AnswerRow[],
+	replies: Map<string, InviteReply>,
+	caller: Caller,
+	code?: string,
+	handoffMessage?: string,
+) {
 	const isStarter = same(caller.email, row.starter_email);
 	const isResponder = !!row.responder_email && same(caller.email, row.responder_email);
 	const timeZone = answers.find((a) => same(a.author_email, caller.email))?.time_zone ?? "UTC";
@@ -230,7 +257,7 @@ function view(row: DecisionRow, answers: AnswerRow[], replies: Map<string, Invit
 		...(isStarter && code
 			? {
 					code,
-					handoffMessage: `${row.starter_name} would like to find a time to meet. Give this to your AI assistant: Neutra decision ${name}, code ${code}. If your assistant doesn't have the Neutra connector yet, add it first.`,
+					handoffMessage,
 				}
 			: {}),
 		expireTime: row.expire_time,
@@ -292,7 +319,20 @@ export async function createDecision(
 		).bind(answer.id, id, answer.author_email, answer.author_name, answer.role, answer.windows_json, answer.time_zone, answer.create_time),
 	]);
 	return {
-		...view(row, [answer], new Map(), caller, code),
+		...view(
+			row,
+			[answer],
+			new Map(),
+			caller,
+			code,
+			handoffMessage({
+				starterName: caller.name,
+				decisionName: `decisions/${id}`,
+				code,
+				connectorUrl: env.MCP_RESOURCE,
+				expires: formatDay(expire, request.timeZone),
+			}),
+		),
 		// What Neutra understood, in the starter's own zone, so the agent can confirm it with them.
 		receivedWindows: windows.map((w) => formatRange(w.start, w.end, request.timeZone)),
 	};

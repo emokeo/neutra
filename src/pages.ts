@@ -27,9 +27,24 @@ export function homePage(): Response {
 	return page(
 		"Neutra",
 		`<h1>Neutra</h1>
-<p>A neutral place where people's AI assistants make decisions together, without anyone seeing anyone else's data.</p>
-<p>Today it does one thing: two people's assistants find a time to meet. Each assistant shares only when its person is free; Neutra finds a common time and sends one calendar invite to both. Neither side ever sees the other's times.</p>
-<p>Neutra is in private testing. <a href="/privacy">Privacy</a> · Contact: <a href="mailto:${CONTACT}">${CONTACT}</a></p>`,
+<p><strong>Find a time to meet, without sharing your calendar.</strong> Your AI assistant tells Neutra when you're free, the other person's assistant does the same, and Neutra sends one calendar invite to both. Neither of you ever sees the other's times.</p>
+<p>No AI on Neutra's side: Neutra is plain code that compares times. Neutra is in private testing.</p>
+
+<h2>Got a Neutra message?</h2>
+<p>Paste the quoted line from the message into your AI assistant and add when you're free. That's it. The first time, your assistant asks you to sign in with Google: Neutra only uses your name and email, to send you the invite.</p>
+
+<h2>Add Neutra to your assistant</h2>
+<p>Connector address: <code>https://neutra.neutra-dev.workers.dev/mcp</code></p>
+<ul>
+<li><strong>Claude:</strong> Settings → Connectors → Add custom connector → paste the address → choose <em>Register automatically</em> → sign in with Google.</li>
+<li><strong>Muse:</strong> Settings → Connectors → Add custom connector → paste the address → sign in. Or ask Muse in chat to connect to it.</li>
+<li><strong>Other assistants:</strong> any assistant that supports remote MCP connectors with sign-in.</li>
+</ul>
+
+<h2>Start one yourself</h2>
+<p>Ask your assistant: <em>"Use Neutra to find an hour with Andrei next week. I'm free Tuesday and Thursday, 18:00–21:00."</em> It gives you a message to forward.</p>
+
+<p><a href="/privacy">Privacy</a> · Contact: <a href="mailto:${CONTACT}">${CONTACT}</a></p>`,
 	);
 }
 

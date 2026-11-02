@@ -19,6 +19,9 @@ jobs:
       - name: type-check
         run: |
           npm run type-check > tsc.log 2>&1 || { grep -E "error TS" tsc.log | head -30 | sed 's/^/::error::/'; exit 1; }
+      - name: tests
+        run: |
+          npm test > test.log 2>&1 || { grep -E "FAIL|✗|×|AssertionError|Error:|expected" test.log | head -40 | sed 's/^/::error::/'; exit 1; }
 
   deploy:
     needs: check

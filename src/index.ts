@@ -13,6 +13,7 @@ import {
 	getDecision,
 } from "./decisions";
 import { recordEvent } from "./events";
+import { createFeatureRequest, getFeatureRequest } from "./feedback";
 import { GoogleHandler } from "./google-handler";
 import { nextStep, SERVER_INSTRUCTIONS } from "./guidance";
 import { runMaintenance } from "./maintenance";
@@ -168,6 +169,36 @@ function createServer() {
 			annotations: { readOnlyHint: true, openWorldHint: false },
 		},
 		async ({ name }) => run("get_answer", caller, (c) => getAnswer(env, c, name)),
+	);
+
+	server.registerTool(
+		"create_feature_request",
+		{
+			title: "Suggest a feature",
+			description: "Tell Neutra's makers about something your person wanted that Neutra can't do yet.",
+			inputSchema: z.object({
+				featureRequest: z.object({
+					summary: z
+						.string()
+						.describe(
+							"The feature in general terms, under 500 characters. Don't include names, email addresses, dates, places or anything about your person.",
+						),
+				}),
+			}),
+			annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+		},
+		async ({ featureRequest }) => run("create_feature_request", caller, (c) => createFeatureRequest(env, c, featureRequest.summary)),
+	);
+
+	server.registerTool(
+		"get_feature_request",
+		{
+			title: "Read your feature request",
+			description: "Read a feature request you sent.",
+			inputSchema: z.object({ name: z.string().describe('e.g. "featureRequests/abc..."') }),
+			annotations: { readOnlyHint: true, openWorldHint: false },
+		},
+		async ({ name }) => run("get_feature_request", caller, (c) => getFeatureRequest(env, c, name)),
 	);
 
 	// One-click shortcuts that clients like Claude show to the person.

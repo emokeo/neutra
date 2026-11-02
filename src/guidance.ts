@@ -14,6 +14,7 @@ Rules:
 - Share your person's available times only through Neutra, never in chat with the other side.
 - Don't paraphrase or shorten the handoffMessage.
 - Send your person's local times with their time zone (e.g. "2026-11-04T18:00" and timeZone "Europe/Zurich"), or timestamps with an offset. Check receivedWindows in the reply: it shows what Neutra understood.
+- If your person wants something Neutra can't do yet, you may tell us with create_feature_request, in general terms and without personal details.
 - Every answer must cover at least twice the meeting length. If there is no common time, you may answer again with wider times; remainingAttempts says how many tries are left.`;
 
 type DecisionView = {

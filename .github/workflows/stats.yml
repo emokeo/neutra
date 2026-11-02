@@ -16,7 +16,7 @@ jobs:
         with:
           node-version: 22
       - name: npm install
-        run: npm install --no-audit --no-fund
+        run: if [ -f package-lock.json ]; then npm ci --no-audit --no-fund; else npm install --no-audit --no-fund; fi
       - name: Funnel
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}

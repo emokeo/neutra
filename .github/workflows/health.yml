@@ -18,7 +18,7 @@ jobs:
         with:
           node-version: 22
       - name: npm install
-        run: npm install --no-audit --no-fund
+        run: if [ -f package-lock.json ]; then npm ci --no-audit --no-fund; else npm install --no-audit --no-fund; fi
       - name: Site is up
         run: |
           code=$(curl -s -o /dev/null -w "%{http_code}" https://neutra.neutra-dev.workers.dev/)

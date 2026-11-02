@@ -1,0 +1,22 @@
+name: Stats
+
+# Run by hand: prints the 14-day funnel from scripts/funnel.sql.
+on:
+  workflow_dispatch:
+
+jobs:
+  stats:
+    runs-on: ubuntu-latest
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Funnel
+        run: |
+          out=$(npx --yes wrangler@4 d1 execute neutra --remote --json --file scripts/funnel.sql)
+          table=$(echo "$out" | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{const rows=JSON.parse(s).at(-1).results;console.log(rows.map(r=>r.step+': '+r.n).join('%0A'))})")
+          echo "::notice title=Funnel (14 days)::$table"
+          echo "$table" | sed 's/%0A/\n/g' | sed 's/^/- /' >> "$GITHUB_STEP_SUMMARY"

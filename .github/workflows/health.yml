@@ -1,0 +1,43 @@
+name: Daily health check
+
+# Fails (and GitHub emails you) when something needs attention.
+on:
+  schedule:
+    - cron: "17 6 * * *"
+  workflow_dispatch:
+
+jobs:
+  health:
+    runs-on: ubuntu-latest
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Site is up
+        run: |
+          code=$(curl -s -o /dev/null -w "%{http_code}" https://neutra.neutra-dev.workers.dev/)
+          [ "$code" = "200" ] || { echo "::error::Home page returned $code"; exit 1; }
+      - name: Inviter key works and has both permissions
+        env:
+          ID: ${{ secrets.GOOGLE_CLIENT_ID }}
+          SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
+          REFRESH: ${{ secrets.INVITER_REFRESH_TOKEN }}
+        run: |
+          r=$(curl -s -X POST https://oauth2.googleapis.com/token -d grant_type=refresh_token -d client_id="$ID" -d client_secret="$SECRET" -d refresh_token="$REFRESH")
+          scope=$(echo "$r" | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{const j=JSON.parse(s);console.log(j.scope||('ERROR '+(j.error||'unknown')))})")
+          echo "::notice::Inviter scopes: $scope"
+          case "$scope" in ERROR*) echo "::error::Inviter key refused by Google: $scope. Create a new one (see docs/RUNBOOK.md)."; exit 1;; esac
+          echo "$scope" | grep -q "calendar.events" || { echo "::error::Inviter key can't send invites (missing calendar.events)."; exit 1; }
+          echo "$scope" | grep -q "gmail.send" || { echo "::error::Inviter key can't send emails (missing gmail.send)."; exit 1; }
+      - name: No stuck emails or internal errors in the last day
+        run: |
+          q="SELECT (SELECT COUNT(*) FROM decisions WHERE state IN ('NO_MATCH','EXPIRED') AND notified = 0 AND update_time < strftime('%Y-%m-%dT%H:%M:%fZ','now','-1 hour')) AS stuck_emails, (SELECT COUNT(*) FROM events WHERE type = 'request_failed' AND json_extract(detail_json,'$.code') = 'INTERNAL' AND create_time > strftime('%Y-%m-%dT%H:%M:%fZ','now','-1 day')) AS internal_errors"
+          out=$(npx --yes wrangler@4 d1 execute neutra --remote --json --command "$q")
+          stuck=$(echo "$out" | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{const r=JSON.parse(s)[0].results[0];console.log(r.stuck_emails+' '+r.internal_errors)})")
+          set -- $stuck
+          echo "::notice::Stuck emails: $1 · Internal errors (24 h): $2"
+          [ "$1" = "0" ] || { echo "::error::$1 failure emails could not be sent for over an hour."; exit 1; }
+          [ "$2" = "0" ] || { echo "::error::$2 requests failed with an internal error in the last 24 hours. See Cloudflare logs."; exit 1; }

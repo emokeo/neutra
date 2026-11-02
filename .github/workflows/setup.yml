@@ -26,7 +26,8 @@ jobs:
         run: |
           report() { tr '\n' ' ' < "$1" | sed 's/\x1b\[[0-9;]*m//g' | cut -c1-600; }
           if [ "${{ inputs.recreate_d1 }}" = "true" ]; then
-            npx wrangler d1 delete neutra -y > d1del.log 2>&1
+            old=$(npx wrangler d1 list --json 2>/dev/null | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{const d=JSON.parse(s||'[]').find(x=>x.name==='neutra'&&!x.jurisdiction);console.log(d?d.uuid:'')})")
+            curl -sS -X DELETE -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" "https://api.cloudflare.com/client/v4/accounts/9e1f03747e81e14938c2d2f78d9ac40d/d1/database/$old" > d1del.log 2>&1
             echo "::notice::d1 delete: $(report d1del.log)"
           fi
           # EU jurisdiction: the data stays in the EU.

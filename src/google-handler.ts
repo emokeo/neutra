@@ -212,6 +212,8 @@ app.get("/callback", async (c) => {
 		props: {
 			email,
 			name,
+			// Which assistant this is, for anonymous usage counts.
+			client: (await c.env.OAUTH_PROVIDER.lookupClient(oauthReqInfo.clientId))?.clientName ?? "unknown",
 		} as Props,
 		request: oauthReqInfo,
 		scope: oauthReqInfo.scope,

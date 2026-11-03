@@ -1,8 +1,9 @@
 // Decisions and answers: storage, matching and the rules from the v0 API.
 import { createEvent, deleteEvent, getReplies, type InviteReply } from "./calendar";
+import { recordEvent } from "./events";
 import { formatDay, formatRange, isValidTimeZone, parseTimestamp } from "./time";
 
-export type Caller = { email: string; name: string };
+export type Caller = { email: string; name: string; client?: string };
 export type Interval = { startTime: string; endTime: string };
 
 export type State = "WAITING" | "NO_MATCH" | "INVITE_SENT" | "ACCEPTED" | "DECLINED" | "EXPIRED";
@@ -28,6 +29,8 @@ type DecisionRow = {
 	code_used: number;
 	responder_email: string | null;
 	attempts: number;
+	stats_ref: string | null;
+	notified: number;
 	scheduled_start: string | null;
 	scheduled_end: string | null;
 	calendar_event_id: string | null;
@@ -204,6 +207,7 @@ async function refresh(
 	if (row.state === "WAITING" && now > Date.parse(row.expire_time)) {
 		await setState(env, row.id, "EXPIRED", now);
 		await env.DB.prepare("UPDATE answers SET windows_json = '[]' WHERE decision_id = ?").bind(row.id).run();
+		await recordEvent(env, { type: "decision_expired", decisionRef: row.stats_ref, detail: { answered: !!row.responder_email } });
 		row = { ...row, state: "EXPIRED", update_time: iso(now) };
 	}
 	if (row.calendar_event_id && (row.state === "INVITE_SENT" || row.state === "ACCEPTED" || row.state === "DECLINED")) {
@@ -216,6 +220,9 @@ async function refresh(
 				: "INVITE_SENT";
 		if (next !== row.state) {
 			await setState(env, row.id, next, now);
+			if (next !== "INVITE_SENT") {
+				await recordEvent(env, { type: "invite_reply", decisionRef: row.stats_ref, detail: { state: next } });
+			}
 			row = { ...row, state: next, update_time: iso(now) };
 		}
 	}
@@ -293,6 +300,8 @@ export async function createDecision(
 		code_used: 0,
 		responder_email: null,
 		attempts: 0,
+		stats_ref: randomId(16),
+		notified: 0,
 		scheduled_start: null,
 		scheduled_end: null,
 		calendar_event_id: null,
@@ -312,12 +321,30 @@ export async function createDecision(
 	};
 	await env.DB.batch([
 		env.DB.prepare(
-			"INSERT INTO decisions (id, starter_email, starter_name, duration_seconds, state, code_hash, code_used, expire_time, create_time, update_time) VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?, ?)",
-		).bind(id, row.starter_email, row.starter_name, durationSeconds, "WAITING", row.code_hash, row.expire_time, row.create_time, row.update_time),
+			"INSERT INTO decisions (id, starter_email, starter_name, duration_seconds, state, code_hash, code_used, stats_ref, expire_time, create_time, update_time) VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?)",
+		).bind(
+			id,
+			row.starter_email,
+			row.starter_name,
+			durationSeconds,
+			"WAITING",
+			row.code_hash,
+			row.stats_ref,
+			row.expire_time,
+			row.create_time,
+			row.update_time,
+		),
 		env.DB.prepare(
 			"INSERT INTO answers (id, decision_id, author_email, author_name, role, windows_json, time_zone, create_time) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
 		).bind(answer.id, id, answer.author_email, answer.author_name, answer.role, answer.windows_json, answer.time_zone, answer.create_time),
 	]);
+	await recordEvent(env, {
+		type: "decision_created",
+		decisionRef: row.stats_ref,
+		client: caller.client,
+		email: caller.email,
+		detail: { durationSeconds, windows: windows.length, localTimes: !!request.timeZone },
+	});
 	return {
 		...view(
 			row,
@@ -357,6 +384,13 @@ export async function deleteDecision(env: Env, caller: Caller, name: string): Pr
 	if (row.calendar_event_id) {
 		await deleteEvent(env, row.calendar_event_id);
 	}
+	await recordEvent(env, {
+		type: "decision_deleted",
+		decisionRef: row.stats_ref,
+		client: caller.client,
+		email: caller.email,
+		detail: { stateBefore: row.state },
+	});
 	await env.DB.batch([
 		env.DB.prepare("DELETE FROM answers WHERE decision_id = ?").bind(row.id),
 		env.DB.prepare("DELETE FROM decisions WHERE id = ?").bind(row.id),
@@ -446,6 +480,18 @@ export async function createAnswer(
 		),
 	]);
 
+	await recordEvent(env, {
+		type: "answer_submitted",
+		decisionRef: row.stats_ref,
+		client: caller.client,
+		email: caller.email,
+		detail: {
+			attempt: attempts,
+			outcome: match ? "match" : next.state === "NO_MATCH" ? "no_match" : "retry",
+			minutesSinceStart: Math.round((now - Date.parse(row.create_time)) / 60_000),
+			localTimes: !!request.timeZone,
+		},
+	});
 	return {
 		answer: {
 			name: `decisions/${id}/answers/${answer.id}`,

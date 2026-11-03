@@ -28,7 +28,7 @@ class Statement {
 export class FakeD1 {
 	readonly db = new Database(":memory:");
 	constructor() {
-		for (const file of ["0001_init.sql", "0002_retries.sql", "0003_time_zones.sql", "0004_lifecycle.sql", "0005_limits.sql"]) {
+		for (const file of ["0001_init.sql", "0002_retries.sql", "0003_time_zones.sql", "0004_lifecycle.sql", "0005_limits.sql", "0006_feature_requests.sql"]) {
 			this.db.exec(readFileSync(new URL(`../migrations/${file}`, import.meta.url), "utf8"));
 		}
 	}

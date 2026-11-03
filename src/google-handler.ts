@@ -199,7 +199,9 @@ app.get("/callback", async (c) => {
 	};
 
 	// v0 is restricted to the test users listed in ALLOWED_EMAILS.
-	if (!verified_email || !isAllowed(email, c.env.ALLOWED_EMAILS)) {
+	// ACCESS_MODE "allowlist" (default): only ALLOWED_EMAILS. "open": any verified Google account.
+	const open = c.env.ACCESS_MODE === "open";
+	if (!verified_email || (!open && !isAllowed(email, c.env.ALLOWED_EMAILS))) {
 		return c.text("Neutra is in private testing. This Google account is not on the list yet.", 403);
 	}
 

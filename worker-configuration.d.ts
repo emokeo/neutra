@@ -4,6 +4,7 @@
 declare namespace Cloudflare {
 	interface Env {
 		MCP_RESOURCE: string;
+		ACCESS_MODE?: "allowlist" | "open";
 		OAUTH_KV: KVNamespace;
 		DB: D1Database;
 		GOOGLE_CLIENT_ID: string;

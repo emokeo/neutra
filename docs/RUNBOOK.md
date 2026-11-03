@@ -36,3 +36,6 @@ When the health check says the key is refused or missing a permission:
 
 ## If the Gmail account is suspended
 Invites and emails stop; decisions still work but nobody gets an invite. Short term: create a new account, a new inviter key (above), update the secret. Long term: a Google Workspace account on Neutra's own domain.
+
+## Dependencies
+Actions → *Create lockfile* → Run workflow opens a PR with `package-lock.json`. Needs, once: Settings → Actions → General → *Allow GitHub Actions to create and approve pull requests*. The bot's PR doesn't start the check by itself; close and reopen it.

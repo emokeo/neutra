@@ -19,6 +19,14 @@ describe("parseTimestamp", () => {
 		expect(parseTimestamp("2026-10-24T12:00", "Europe/Zurich")).toBe(Date.parse("2026-10-24T10:00:00Z"));
 	});
 
+	it("refuses dates and times that don't exist", () => {
+		expect(parseTimestamp("2026-02-31T10:00", "Europe/Zurich")).toBeNull();
+		expect(parseTimestamp("2026-13-01T10:00", "Europe/Zurich")).toBeNull();
+		expect(parseTimestamp("2026-11-04T25:00:00+01:00")).toBeNull();
+		expect(parseTimestamp("2026-02-29T10:00:00Z")).toBeNull();
+		expect(parseTimestamp("2028-02-29T10:00:00Z")).not.toBeNull();
+	});
+
 	it("refuses a local time without a zone", () => {
 		expect(parseTimestamp("2026-11-04T18:00")).toBeNull();
 		expect(parseTimestamp("next Tuesday", "Europe/Zurich")).toBeNull();

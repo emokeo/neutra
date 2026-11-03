@@ -17,18 +17,20 @@ class Statement {
 	async all<T>(): Promise<{ results: T[] }> {
 		return { results: this.db.prepare(this.sql).all(...this.params) as T[] };
 	}
+	// Shaped like D1's result, so code can check meta.changes.
 	async run() {
-		return this.db.prepare(this.sql).run(...this.params);
+		return this.runSync();
 	}
 	runSync() {
-		return this.db.prepare(this.sql).run(...this.params);
+		const info = this.db.prepare(this.sql).run(...this.params);
+		return { success: true, meta: { changes: info.changes } };
 	}
 }
 
 export class FakeD1 {
 	readonly db = new Database(":memory:");
 	constructor() {
-		for (const file of ["0001_init.sql", "0002_retries.sql", "0003_time_zones.sql", "0004_lifecycle.sql", "0005_limits.sql", "0006_feature_requests.sql"]) {
+		for (const file of ["0001_init.sql", "0002_retries.sql", "0003_time_zones.sql", "0004_lifecycle.sql", "0005_limits.sql", "0006_feature_requests.sql", "0007_claims.sql"]) {
 			this.db.exec(readFileSync(new URL(`../migrations/${file}`, import.meta.url), "utf8"));
 		}
 	}

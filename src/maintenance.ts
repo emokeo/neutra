@@ -1,5 +1,6 @@
-// Runs every 15 minutes: expires decisions, tells starters when nothing worked out, and deletes old data.
-import { sendEmail } from "./calendar";
+// Runs every 15 minutes: finishes stopped answers, expires decisions, tells starters when nothing worked out, and deletes old data.
+import { eventExists, sendEmail } from "./calendar";
+import { MAX_ANSWERS } from "./decisions";
 import { recordEvent } from "./events";
 import { formatDay } from "./time";
 
@@ -46,7 +47,44 @@ Neutra`,
 
 export async function runMaintenance(env: Env, now = Date.now()) {
 	const nowIso = new Date(now).toISOString();
-	const result = { expired: 0, notified: 0, deleted: 0 };
+	const result = { recovered: 0, expired: 0, notified: 0, deleted: 0 };
+
+	// 0. Answers that stopped mid-way (MATCHING for over 5 minutes). If the invite went out, finish the
+	// answer; if not, the request opens again. The try stays counted (see createAnswer); after the last
+	// one the decision ends as NO_MATCH. If Google can't say, wait for the next run.
+	const { results: stuck } = await env.DB.prepare(
+		"SELECT id, claim_id, pending_event_id FROM decisions WHERE state = 'MATCHING' AND update_time < ?",
+	)
+		.bind(new Date(now - 5 * 60_000).toISOString())
+		.all<{ id: string; claim_id: string | null; pending_event_id: string | null }>();
+	const stillStuck = "EXISTS (SELECT 1 FROM decisions WHERE id = ? AND state = 'MATCHING' AND claim_id IS ?)";
+	for (const d of stuck) {
+		let sent = false;
+		try {
+			sent = !!d.pending_event_id && (await eventExists(env, d.pending_event_id));
+		} catch (error) {
+			console.error("recovery check failed", d.id, error);
+			continue;
+		}
+		const results = sent
+			? await env.DB.batch([
+					env.DB.prepare(`UPDATE answers SET windows_json = '[]' WHERE decision_id = ? AND ${stillStuck}`).bind(d.id, d.id, d.claim_id),
+					env.DB.prepare(
+						"UPDATE decisions SET state = 'INVITE_SENT', code_used = 1, calendar_event_id = pending_event_id, pending_event_id = NULL, claim_id = NULL, update_time = ? WHERE id = ? AND state = 'MATCHING' AND claim_id IS ?",
+					).bind(nowIso, d.id, d.claim_id),
+				])
+			: await env.DB.batch([
+					env.DB.prepare(
+						`UPDATE answers SET windows_json = '[]' WHERE decision_id = ? AND ${stillStuck} AND (SELECT attempts FROM decisions WHERE id = ?) >= ?`,
+					).bind(d.id, d.id, d.claim_id, d.id, MAX_ANSWERS),
+					env.DB.prepare(
+						`UPDATE decisions SET state = CASE WHEN attempts >= ? THEN 'NO_MATCH' ELSE 'WAITING' END, code_used = CASE WHEN attempts >= ? THEN 1 ELSE 0 END,
+						 claim_id = NULL, pending_event_id = NULL, scheduled_start = NULL, scheduled_end = NULL, update_time = ?
+						 WHERE id = ? AND state = 'MATCHING' AND claim_id IS ?`,
+					).bind(MAX_ANSWERS, MAX_ANSWERS, nowIso, d.id, d.claim_id),
+				]);
+		if (results[1].meta.changes === 1) result.recovered++;
+	}
 
 	// 1. Decisions nobody settled in time.
 	const { results: overdue } = await env.DB.prepare(
@@ -64,6 +102,7 @@ export async function runMaintenance(env: Env, now = Date.now()) {
 	}
 
 	// 2. Delete everything about decisions that ended more than RETENTION_DAYS ago.
+	// The calendar event stays: deleting it would also remove it from both people's calendars.
 	const cutoff = new Date(now - RETENTION_DAYS * 24 * 60 * 60 * 1000).toISOString();
 	const { results: old } = await env.DB.prepare(
 		`SELECT id FROM decisions

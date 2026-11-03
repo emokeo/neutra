@@ -89,6 +89,15 @@ describe("retention", () => {
 		expect(count("answers")).toBe(0);
 	});
 
+	it("leaves the past meeting in the calendar, so nobody's copy disappears", async () => {
+		const decision = await start();
+		await createAnswer(env, ben, { parent: decision.name, code: decision.code!, windows: benFree });
+		await runMaintenance(env, at("2026-11-12T08:00:00Z"));
+		expect(count("decisions")).toBe(0);
+		expect(google.events.size).toBe(1);
+		expect(google.fetch.mock.calls.some(([, init]) => init?.method === "DELETE")).toBe(false);
+	});
+
 	it("deletes an expired decision 7 days after it ended", async () => {
 		await start();
 		await runMaintenance(env, at("2026-11-04T19:30:00Z"));
@@ -104,6 +113,68 @@ describe("retention", () => {
 		await runMaintenance(env, at("2026-11-12T08:00:00Z"));
 		expect(count("decisions")).toBe(0);
 		expect(count("events")).toBeGreaterThanOrEqual(2);
+	});
+});
+
+describe("answers that stopped mid-way", () => {
+	it("puts an old-style stuck answer back to WAITING", async () => {
+		const decision = await start();
+		db.db.prepare("UPDATE decisions SET state = 'MATCHING', attempts = 1, update_time = ?").run("2026-11-03T08:00:00.000Z");
+		await runMaintenance(env, at("2026-11-03T08:10:00Z"));
+		expect((await getDecision(env, anna, decision.name)).state).toBe("WAITING");
+		const { decision: after } = await createAnswer(env, ben, { parent: decision.name, code: decision.code!, windows: benFree });
+		expect(after.state).toBe("INVITE_SENT");
+	});
+
+	it("finishes an answer whose invite went out, without giving the try back", async () => {
+		const decision = await start();
+		google.failures.create = "after";
+		google.failures.read = true;
+		await createAnswer(env, ben, { parent: decision.name, code: decision.code!, windows: benFree }).catch(() => {});
+		google.failures.read = false;
+		expect(google.events.size).toBe(1);
+
+		await runMaintenance(env, at("2026-11-03T08:03:00Z"));
+		expect((await getDecision(env, anna, decision.name)).state).toBe("WAITING"); // too early to step in
+		expect(await runMaintenance(env, at("2026-11-03T08:10:00Z"))).toMatchObject({ recovered: 1 });
+		const read = await getDecision(env, ben, decision.name);
+		expect(read.state).toBe("INVITE_SENT");
+		expect(read.meeting.scheduledTime).toEqual({ startTime: "2026-11-04T18:15:00.000Z", endTime: "2026-11-04T19:15:00.000Z" });
+		expect(read.participants.map((p) => p.role)).toEqual(["STARTER", "RESPONDER"]);
+		const windows = db.db.prepare("SELECT windows_json FROM answers").all() as { windows_json: string }[];
+		expect(windows.every((w) => w.windows_json === "[]")).toBe(true);
+	});
+
+	it("opens the request again when the invite never went out, with the try counted", async () => {
+		const decision = await start();
+		google.failures.create = "before";
+		await createAnswer(env, ben, { parent: decision.name, code: decision.code!, windows: benFree }).catch(() => {});
+		expect(await runMaintenance(env, at("2026-11-03T08:10:00Z"))).toMatchObject({ recovered: 1 });
+		const { decision: after } = await createAnswer(env, ben, { parent: decision.name, code: decision.code!, windows: benBusyThen });
+		expect(after.remainingAttempts).toBe(1);
+	});
+
+	it("ends the decision when the last try's invite never went out", async () => {
+		const decision = await start();
+		db.db
+			.prepare("UPDATE decisions SET state = 'MATCHING', attempts = 3, claim_id = 'c1', pending_event_id = 'neverbeensent', responder_email = ?, update_time = ?")
+			.run(ben.email, "2026-11-03T08:00:00.000Z");
+		await runMaintenance(env, at("2026-11-03T08:10:00Z"));
+		expect((await getDecision(env, anna, decision.name)).state).toBe("NO_MATCH");
+		const windows = db.db.prepare("SELECT windows_json FROM answers").all() as { windows_json: string }[];
+		expect(windows.every((w) => w.windows_json === "[]")).toBe(true);
+	});
+
+	it("waits when Google can't say whether the invite went out", async () => {
+		const decision = await start();
+		db.db
+			.prepare("UPDATE decisions SET state = 'MATCHING', attempts = 1, claim_id = 'c1', pending_event_id = 'unknown', update_time = ?")
+			.run("2026-11-03T08:00:00.000Z");
+		google.failures.read = true;
+		expect(await runMaintenance(env, at("2026-11-03T08:10:00Z"))).toMatchObject({ recovered: 0 });
+		google.failures.read = false;
+		expect((db.db.prepare("SELECT state FROM decisions").get() as { state: string }).state).toBe("MATCHING");
+		expect((await getDecision(env, anna, decision.name)).state).toBe("WAITING");
 	});
 });
 

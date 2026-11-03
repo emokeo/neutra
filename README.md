@@ -50,7 +50,7 @@ A remote MCP server with Google sign-in. Resources follow [Google's AIPs](https:
 | `delete_decision` | Cancel a decision you started, including its invite. |
 | `get_answer` | Read your own answer. |
 
-Errors use `google.rpc` codes: `NOT_FOUND`, `PERMISSION_DENIED`, `FAILED_PRECONDITION`, `INVALID_ARGUMENT`.
+Errors use `google.rpc` codes: `NOT_FOUND`, `PERMISSION_DENIED`, `FAILED_PRECONDITION`, `INVALID_ARGUMENT`, `RESOURCE_EXHAUSTED` (a daily or hourly limit was reached).
 
 ## Running Neutra
 

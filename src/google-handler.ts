@@ -99,7 +99,7 @@ app.post("/authorize", async (c) => {
 			return error.toResponse();
 		}
 		// Unexpected non-OAuth error
-		return c.text(`Internal server error: ${error.message}`, 500);
+		return c.text("Something went wrong while signing in. Please try again.", 500);
 	}
 });
 
@@ -188,7 +188,8 @@ app.get("/callback", async (c) => {
 		},
 	});
 	if (!userResponse.ok) {
-		return c.text(`Failed to fetch user info: ${await userResponse.text()}`, 500);
+		console.error("userinfo failed", userResponse.status);
+		return c.text("Couldn't read your Google profile. Please try signing in again.", 500);
 	}
 
 	const { id, name, email, verified_email } = (await userResponse.json()) as {

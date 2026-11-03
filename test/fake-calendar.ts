@@ -7,6 +7,8 @@ export function fakeGoogle() {
 	const events = new Map<string, FakeEvent>();
 	const emails: { raw: string }[] = [];
 	let next = 1;
+	// Set to make the next event creation fail: "before" fails without creating, "after" creates and then fails.
+	const failures = { create: null as null | "before" | "after", read: false };
 	const fetch = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
 		const url = new URL(typeof input === "string" ? input : input instanceof URL ? input.href : input.url);
 		const method = init?.method ?? "GET";
@@ -26,16 +28,26 @@ export function fakeGoogle() {
 
 		if (method === "POST" && !id) {
 			const body = JSON.parse(String(init?.body));
-			const eventId = `evt${next++}`;
+			const eventId: string = body.id ?? `evt${next++}`;
+			if (failures.create === "before") {
+				failures.create = null;
+				return json({ error: "backend error" }, 503);
+			}
+			if (events.has(eventId)) return json({ error: "duplicate" }, 409);
 			events.set(eventId, {
 				summary: body.summary,
 				start: body.start.dateTime,
 				end: body.end.dateTime,
 				attendees: body.attendees.map((a: { email: string }) => ({ email: a.email, responseStatus: "needsAction" })),
 			});
+			if (failures.create === "after") {
+				failures.create = null;
+				return json({ error: "backend error" }, 503);
+			}
 			return json({ id: eventId });
 		}
 		if (method === "GET" && id) {
+			if (failures.read) return json({ error: "backend error" }, 503);
 			const event = events.get(id);
 			return event ? json(event) : json({}, 404);
 		}
@@ -51,5 +63,5 @@ export function fakeGoogle() {
 		if (attendee) attendee.responseStatus = responseStatus;
 	}
 
-	return { fetch, events, emails, reply };
+	return { fetch, events, emails, reply, failures };
 }

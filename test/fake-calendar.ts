@@ -8,7 +8,7 @@ export function fakeGoogle() {
 	const emails: { raw: string }[] = [];
 	let next = 1;
 	// Set to make the next event creation fail: "before" fails without creating, "after" creates and then fails.
-	const failures = { create: null as null | "before" | "after", read: false, delete: false };
+	const failures = { create: null as null | "before" | "after", read: false };
 	const fetch = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
 		const url = new URL(typeof input === "string" ? input : input instanceof URL ? input.href : input.url);
 		const method = init?.method ?? "GET";
@@ -52,7 +52,6 @@ export function fakeGoogle() {
 			return event ? json(event) : json({}, 404);
 		}
 		if (method === "DELETE" && id) {
-			if (failures.delete) return json({ error: "backend error" }, 503);
 			return events.delete(id) ? new Response(null, { status: 204 }) : json({}, 410);
 		}
 		return json({ error: "unexpected request" }, 500);

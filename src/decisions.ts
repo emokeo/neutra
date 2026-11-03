@@ -225,21 +225,6 @@ async function setState(env: Env, id: string, from: StoredState, state: StoredSt
 	return result.meta.changes === 1;
 }
 
-/** Cancels a declined meeting for both. The event ID is kept until Google confirms, so a failed cancel is retried. */
-async function cancelDeclined(env: Env, row: DecisionRow): Promise<DecisionRow> {
-	if (!row.calendar_event_id) return row;
-	try {
-		await deleteEvent(env, row.calendar_event_id);
-	} catch (error) {
-		console.error("cancel failed", row.id, error);
-		return row;
-	}
-	await env.DB.prepare("UPDATE decisions SET calendar_event_id = NULL WHERE id = ? AND calendar_event_id = ?")
-		.bind(row.id, row.calendar_event_id)
-		.run();
-	return { ...row, calendar_event_id: null };
-}
-
 /** Brings a decision up to date: expiry, and the invite replies from the calendar. */
 async function refresh(
 	env: Env,
@@ -254,10 +239,7 @@ async function refresh(
 		}
 		row = { ...row, state: "EXPIRED", update_time: iso(now) };
 	}
-	if (row.calendar_event_id && row.state === "DECLINED") {
-		// The cancel didn't go through last time; try again.
-		row = await cancelDeclined(env, row);
-	} else if (row.calendar_event_id && (row.state === "INVITE_SENT" || row.state === "ACCEPTED")) {
+	if (row.calendar_event_id && (row.state === "INVITE_SENT" || row.state === "ACCEPTED" || row.state === "DECLINED")) {
 		replies = await getReplies(env, row.calendar_event_id);
 		const all = [...replies.values()];
 		const next: State = all.some((r) => r === "DECLINED")
@@ -270,17 +252,9 @@ async function refresh(
 				await recordEvent(env, { type: "invite_reply", decisionRef: row.stats_ref, detail: { state: next } });
 			}
 			row = { ...row, state: next, update_time: iso(now) };
-			// One person said no: cancel the meeting for the other person too.
-			if (next === "DECLINED") row = await cancelDeclined(env, row);
 		}
 	}
 	return { row, replies };
-}
-
-/** Brings a decision up to date without a caller, for the maintenance job. */
-export async function syncDecision(env: Env, id: string, now = Date.now()): Promise<State> {
-	const { row } = await refresh(env, await load(env, id), now);
-	return row.state as State;
 }
 
 const INVITED: StoredState[] = ["INVITE_SENT", "ACCEPTED", "DECLINED"];

@@ -339,9 +339,6 @@ describe("get_decision", () => {
 		expect((await getDecision(env, ben, decision.name)).state).toBe("ACCEPTED");
 		google.reply(eventId, ben.email, "declined");
 		expect((await getDecision(env, anna, decision.name)).state).toBe("DECLINED");
-		// Cancelled for both, so nobody keeps a meeting that's off.
-		expect(google.events.size).toBe(0);
-		expect((await getDecision(env, ben, decision.name)).state).toBe("DECLINED");
 	});
 
 	it("shows EXPIRED once the offered times have run out", async () => {
@@ -410,21 +407,6 @@ describe("when Google or the database fails", () => {
 		await rejects(createAnswer(env, ben, { parent: decision.name, code: decision.code!, windows: benFree }), "FAILED_PRECONDITION");
 		expect(google.events.size).toBe(0);
 		expect((await getDecision(env, anna, decision.name)).state).toBe("WAITING");
-	});
-});
-
-describe("decline", () => {
-	it("retries the cancel when Google fails the first time", async () => {
-		const decision = await start();
-		await createAnswer(env, ben, { parent: decision.name, code: decision.code!, windows: benFree });
-		const [eventId] = [...google.events.keys()];
-		google.reply(eventId, ben.email, "declined");
-		google.failures.delete = true;
-		expect((await getDecision(env, anna, decision.name)).state).toBe("DECLINED");
-		expect(google.events.size).toBe(1);
-		google.failures.delete = false;
-		expect((await getDecision(env, anna, decision.name)).state).toBe("DECLINED");
-		expect(google.events.size).toBe(0);
 	});
 });
 

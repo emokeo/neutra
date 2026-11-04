@@ -21,7 +21,7 @@ jobs:
         run: if [ -f package-lock.json ]; then npm ci --no-audit --no-fund; else npm install --no-audit --no-fund; fi
       - name: Site is up
         run: |
-          code=$(curl -s -o /dev/null -w "%{http_code}" https://neutra.neutra-dev.workers.dev/)
+          code=$(curl -s -o /dev/null -w "%{http_code}" https://neutra.day/)
           [ "$code" = "200" ] || { echo "::error::Home page returned $code"; exit 1; }
       - name: Inviter key works and has both permissions
         env:

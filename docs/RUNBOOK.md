@@ -39,3 +39,6 @@ Invites and emails stop; decisions still work but nobody gets an invite. Short t
 
 ## Dependencies
 Actions → *Create lockfile* → Run workflow opens a PR with `package-lock.json`. Needs, once: Settings → Actions → General → *Allow GitHub Actions to create and approve pull requests*. The bot's PR doesn't start the check by itself; close and reopen it.
+
+## The domain (neutra.day)
+Registered in Cloudflare (auto-renew on) and attached to the Worker as a Custom Domain: Workers & Pages → neutra → Settings → Domains & Routes. If it lapses, every connected assistant loses Neutra. Google sign-in needs `neutra.day` as an authorized domain (Google Auth Platform → Branding) and `https://neutra.day/callback` as a redirect URI (Clients → the web client).

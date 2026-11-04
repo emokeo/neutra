@@ -52,7 +52,7 @@ export function nextStep(
 		case "NO_MATCH":
 			return "No common time was found and the decision has ended. The person who started it can start a new one with other times.";
 		case "EXPIRED":
-			return "The offered times ran out before an answer. The person who started it can start a new one.";
+			return "Nobody found a time within the 14 days a request stays open. The person who started it can start a new one.";
 		default:
 			return "Use get_decision to check the state.";
 	}

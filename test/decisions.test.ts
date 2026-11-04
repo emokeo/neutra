@@ -342,9 +342,11 @@ describe("get_decision", () => {
 		expect((await getDecision(env, anna, decision.name)).state).toBe("DECLINED");
 	});
 
-	it("shows EXPIRED once the offered times have run out", async () => {
+	it("stays open after the starter's times have passed, and shows EXPIRED after 14 days", async () => {
 		const decision = await start();
 		vi.setSystemTime(new Date("2026-11-04T19:30:00Z"));
+		expect((await getDecision(env, anna, decision.name)).state).toBe("WAITING");
+		vi.setSystemTime(new Date("2026-11-17T08:01:00Z"));
 		expect((await getDecision(env, anna, decision.name)).state).toBe("EXPIRED");
 		await rejects(createAnswer(env, ben, { parent: decision.name, code: decision.code!, windows: benFree }), "FAILED_PRECONDITION");
 	});

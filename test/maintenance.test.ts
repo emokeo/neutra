@@ -44,17 +44,31 @@ const at = (iso: string) => {
 const count = (table: string) => (db.db.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get() as { n: number }).n;
 
 describe("expiry and the failure emails", () => {
-	it("expires an unanswered decision and emails the starter once", async () => {
+	it("emails the starter once when their times have passed, but keeps the request open until the deadline", async () => {
 		const decision = await start();
-		const now = at("2026-11-04T19:30:00Z");
-
-		expect(await runMaintenance(env, now)).toMatchObject({ expired: 1, notified: 1 });
-		expect((await getDecision(env, anna, decision.name)).state).toBe("EXPIRED");
+		// Anna's last possible start is 4 Nov 19:00 UTC.
+		expect(await runMaintenance(env, at("2026-11-04T19:30:00Z"))).toMatchObject({ timesPassed: 1, expired: 0 });
 		expect(google.emails).toHaveLength(1);
 		expect(google.emails[0].raw).toContain("To: anna@example.com");
-		expect(google.emails[0].raw).toContain("Nobody answered your Neutra request");
+		expect(google.emails[0].raw).toContain("The times you offered in your Neutra request have passed");
+		// Still open: ending it now would tell the other person when Anna's times end.
+		expect((await getDecision(env, anna, decision.name)).state).toBe("WAITING");
+		const starterWindows = db.db.prepare("SELECT windows_json FROM answers WHERE role = 'STARTER'").get() as { windows_json: string };
+		expect(starterWindows.windows_json).toBe("[]");
 
-		expect(await runMaintenance(env, now + 15 * 60_000)).toMatchObject({ expired: 0, notified: 0 });
+		// 14 days after creation (3 Nov 08:00) it expires, without a second email.
+		expect(await runMaintenance(env, at("2026-11-17T08:15:00Z"))).toMatchObject({ expired: 1, notified: 0 });
+		expect((await getDecision(env, anna, decision.name)).state).toBe("EXPIRED");
+		expect(google.emails).toHaveLength(1);
+	});
+
+	it("expires after 14 days with one email when nobody answered", async () => {
+		await createDecision(env, anna, { durationSeconds: "3600s", starterWindows: [window("2026-11-25T10:00:00Z", "2026-11-25T14:00:00Z")] });
+		expect(await runMaintenance(env, at("2026-11-17T07:45:00Z"))).toMatchObject({ expired: 0, timesPassed: 0 });
+		expect(await runMaintenance(env, at("2026-11-17T08:15:00Z"))).toMatchObject({ expired: 1, notified: 1 });
+		expect(google.emails).toHaveLength(1);
+		expect(google.emails[0].raw).toContain("Nobody answered your Neutra request within 14 days");
+		expect(await runMaintenance(env, at("2026-11-17T08:30:00Z"))).toMatchObject({ expired: 0, notified: 0 });
 		expect(google.emails).toHaveLength(1);
 	});
 
@@ -100,10 +114,10 @@ describe("retention", () => {
 
 	it("deletes an expired decision 7 days after it ended", async () => {
 		await start();
-		await runMaintenance(env, at("2026-11-04T19:30:00Z"));
-		await runMaintenance(env, at("2026-11-11T19:00:00Z"));
+		await runMaintenance(env, at("2026-11-17T08:15:00Z"));
+		await runMaintenance(env, at("2026-11-24T08:00:00Z"));
 		expect(count("decisions")).toBe(1);
-		await runMaintenance(env, at("2026-11-11T19:45:00Z"));
+		await runMaintenance(env, at("2026-11-24T08:30:00Z"));
 		expect(count("decisions")).toBe(0);
 	});
 

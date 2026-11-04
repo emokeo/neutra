@@ -1,6 +1,6 @@
 // Runs every 15 minutes: finishes stopped answers, expires decisions, tells starters when nothing worked out, and deletes old data.
 import { eventExists, sendEmail } from "./calendar";
-import { MAX_ANSWERS } from "./decisions";
+import { ANSWER_DAYS, MAX_ANSWERS } from "./decisions";
 import { recordEvent } from "./events";
 import { formatDay } from "./time";
 
@@ -12,21 +12,34 @@ type Row = {
 	starter_email: string;
 	starter_name: string;
 	responder_email: string | null;
-	expire_time: string;
+	offered_until: string | null;
 };
 
 function firstName(name: string): string {
 	return name.trim().split(/\s+/)[0] || name;
 }
 
-export function noAnswerEmail(starterName: string, lastDay: string) {
+export function noAnswerEmail(starterName: string) {
 	return {
 		subject: "Your Neutra request expired",
 		body: `Hi ${firstName(starterName)},
 
-Nobody answered your Neutra request before your offered times ran out (the last was on ${lastDay}).
+Nobody answered your Neutra request within ${ANSWER_DAYS} days.
 
 If you still want to meet, ask your assistant to start a new request and send the message again.
+
+Neutra`,
+	};
+}
+
+export function timesPassedEmail(starterName: string, lastDay: string) {
+	return {
+		subject: "Your Neutra request: your times have passed",
+		body: `Hi ${firstName(starterName)},
+
+The times you offered in your Neutra request have passed (the last was on ${lastDay}), and nobody answered before then.
+
+If you still want to meet, ask your assistant to start a new request with new times.
 
 Neutra`,
 	};
@@ -45,9 +58,23 @@ Neutra`,
 	};
 }
 
+/** "No common time" if the other person answered, otherwise "your times have passed". */
+async function starterEmail(env: Env, d: Row) {
+	if (d.responder_email) {
+		const responder = await env.DB.prepare("SELECT author_name FROM answers WHERE decision_id = ? AND role = 'RESPONDER'")
+			.bind(d.id)
+			.first<{ author_name: string }>();
+		return noMatchEmail(d.starter_name, responder?.author_name ?? "The other person");
+	}
+	const starter = await env.DB.prepare("SELECT time_zone FROM answers WHERE decision_id = ? AND role = 'STARTER'")
+		.bind(d.id)
+		.first<{ time_zone: string | null }>();
+	return timesPassedEmail(d.starter_name, formatDay(Date.parse(d.offered_until ?? ""), starter?.time_zone ?? undefined));
+}
+
 export async function runMaintenance(env: Env, now = Date.now()) {
 	const nowIso = new Date(now).toISOString();
-	const result = { recovered: 0, expired: 0, notified: 0, deleted: 0 };
+	const result = { recovered: 0, expired: 0, timesPassed: 0, notified: 0, deleted: 0 };
 
 	// 0. Answers that stopped mid-way (MATCHING for over 5 minutes). If the invite went out, finish the
 	// answer; if not, the request opens again. The try stays counted (see createAnswer); after the last
@@ -101,6 +128,27 @@ export async function runMaintenance(env: Env, now = Date.now()) {
 		result.expired++;
 	}
 
+	// 1b. The starter's times have passed but the request is still open. It stays open until its fixed deadline
+	// (ending it now would tell the other person when the starter's times end), but the starter hears now,
+	// and their times are deleted.
+	const { results: passed } = await env.DB.prepare(
+		"SELECT id, stats_ref, starter_email, starter_name, responder_email, offered_until FROM decisions WHERE state = 'WAITING' AND notified = 0 AND offered_until < ?",
+	)
+		.bind(nowIso)
+		.all<Row>();
+	for (const d of passed) {
+		try {
+			await sendEmail(env, { to: d.starter_email, ...(await starterEmail(env, d)) });
+			await env.DB.batch([
+				env.DB.prepare("UPDATE decisions SET notified = 1 WHERE id = ?").bind(d.id),
+				env.DB.prepare("UPDATE answers SET windows_json = '[]' WHERE decision_id = ? AND role = 'STARTER'").bind(d.id),
+			]);
+			result.timesPassed++;
+		} catch (error) {
+			console.error("notify failed", d.id, error);
+		}
+	}
+
 	// 2. Delete everything about decisions that ended more than RETENTION_DAYS ago.
 	// The calendar event stays: deleting it would also remove it from both people's calendars.
 	const cutoff = new Date(now - RETENTION_DAYS * 24 * 60 * 60 * 1000).toISOString();
@@ -121,23 +169,11 @@ export async function runMaintenance(env: Env, now = Date.now()) {
 
 	// 3. One email to the starter when nothing worked out.
 	const { results: unnotified } = await env.DB.prepare(
-		"SELECT id, stats_ref, starter_email, starter_name, responder_email, expire_time FROM decisions WHERE state IN ('NO_MATCH', 'EXPIRED') AND notified = 0",
+		"SELECT id, stats_ref, starter_email, starter_name, responder_email, offered_until FROM decisions WHERE state IN ('NO_MATCH', 'EXPIRED') AND notified = 0",
 	).all<Row>();
 	for (const d of unnotified) {
 		try {
-			let email;
-			if (d.responder_email) {
-				const responder = await env.DB.prepare("SELECT author_name FROM answers WHERE decision_id = ? AND role = 'RESPONDER'")
-					.bind(d.id)
-					.first<{ author_name: string }>();
-				email = noMatchEmail(d.starter_name, responder?.author_name ?? "The other person");
-			} else {
-				const starter = await env.DB.prepare("SELECT time_zone FROM answers WHERE decision_id = ? AND role = 'STARTER'")
-					.bind(d.id)
-					.first<{ time_zone: string | null }>();
-				email = noAnswerEmail(d.starter_name, formatDay(Date.parse(d.expire_time), starter?.time_zone ?? undefined));
-			}
-			await sendEmail(env, { to: d.starter_email, ...email });
+			await sendEmail(env, { to: d.starter_email, ...(d.responder_email ? await starterEmail(env, d) : noAnswerEmail(d.starter_name)) });
 			await env.DB.prepare("UPDATE decisions SET notified = 1 WHERE id = ?").bind(d.id).run();
 			result.notified++;
 		} catch (error) {

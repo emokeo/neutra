@@ -82,7 +82,7 @@ export function privacyPage(): Response {
 <p>We receive your name and email address from Google. Nothing else: we don't access your calendar, contacts or mail.</p>
 
 <h2>Your available times</h2>
-<p>Your assistant sends the times you're free for one decision. They are never shown to anyone else. The times of the person answering are never stored at all. The starter's times are deleted as soon as the decision is matched or ends, at most 30 days after it started.</p>
+<p>Your assistant sends the times you're free for one decision. They are never shown to anyone else. The times of the person answering are never stored at all. The starter's times are deleted as soon as the decision is matched or ends, at most 14 days after it started.</p>
 
 <h2>Decisions</h2>
 <p>For each decision we keep the participants' names and email addresses, its state and, if one was found, the meeting time. <strong>Everything about a decision is deleted 7 days after its meeting ends</strong>, or 7 days after it ended without a meeting. The person who started a decision can delete it earlier at any time, which also cancels the invite.</p>

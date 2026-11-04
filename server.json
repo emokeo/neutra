@@ -11,7 +11,7 @@
   "remotes": [
     {
       "type": "streamable-http",
-      "url": "https://neutra.neutra-dev.workers.dev/mcp"
+      "url": "https://neutra.day/mcp"
     }
   ]
 }

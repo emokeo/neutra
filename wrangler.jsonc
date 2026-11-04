@@ -14,7 +14,7 @@
   "vars": {
     "MCP_RESOURCE": "https://neutra.day/mcp",
     // "allowlist": only the emails in ALLOWED_EMAILS can sign in. "open": any verified Google account.
-    "ACCESS_MODE": "allowlist",
+    "ACCESS_MODE": "open",
   },
   "kv_namespaces": [
     {

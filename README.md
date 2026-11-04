@@ -32,8 +32,6 @@ Details: [privacy page](https://neutra.day/privacy).
 
 ## Try it
 
-Neutra is in private testing. To join, write to neutra.invites@gmail.com.
-
 1. In Claude: **Settings → Connectors → Add custom connector**, URL `https://neutra.day/mcp`, choose **Register automatically**.
 2. Sign in with Google. Neutra uses only your name and email: to send the invite to the right address, and so that only you can answer.
 3. Ask: *"Use Neutra to find an hour with Ben next week. I'm free Tuesday and Thursday, 18:00–21:00."* Forward the message it gives you.

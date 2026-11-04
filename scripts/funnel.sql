@@ -1,5 +1,5 @@
--- Neutra funnel for the last 14 days. Run with the "Stats" workflow, or:
--- npx wrangler d1 execute neutra --remote --file scripts/funnel.sql
+-- Neutra funnel for the last 14 days, plus the goal count. Run with the "Stats" workflow.
+-- TEAM_IDS is replaced by the workflow with the person IDs of ALLOWED_EMAILS (you and your testers).
 WITH recent AS (
   SELECT * FROM events WHERE create_time > strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '-14 days')
 ),
@@ -18,4 +18,6 @@ UNION ALL SELECT 'distinct starters', COUNT(DISTINCT person) FROM recent WHERE t
 UNION ALL SELECT 'distinct responders', COUNT(DISTINCT person) FROM recent WHERE type = 'answer_submitted'
 UNION ALL SELECT 'requests (creates + answers)', COUNT(*) FROM recent WHERE type IN ('decision_created', 'answer_submitted')
 UNION ALL SELECT 'failed requests', COUNT(*) FROM recent WHERE type = 'request_failed'
+UNION ALL SELECT 'outside starters (without you and testers)', COUNT(DISTINCT person) FROM recent WHERE type = 'decision_created' AND person NOT IN (TEAM_IDS)
+UNION ALL SELECT 'outside requests, all time (goal: 1,000)', COUNT(*) FROM events WHERE type IN ('decision_created', 'answer_submitted') AND person NOT IN (TEAM_IDS)
 UNION ALL SELECT 'requests by ' || COALESCE(client, 'unknown'), COUNT(*) FROM recent WHERE type IN ('decision_created', 'answer_submitted') GROUP BY client;

@@ -40,6 +40,7 @@ type DecisionRow = {
 	claim_id: string | null;
 	pending_event_id: string | null;
 	expire_time: string;
+	offered_until: string | null;
 	create_time: string;
 	update_time: string;
 };
@@ -56,6 +57,7 @@ type AnswerRow = {
 };
 
 const MAX_DAYS_AHEAD = 30;
+export const ANSWER_DAYS = 14; // every request stays open this long, whatever the starter's times
 const MIN_LEAD_MS = 60 * 60 * 1000; // a matched meeting starts at least 1 hour from now
 const SLOT_MS = 15 * 60 * 1000; // matched times start on a quarter hour
 const MAX_DURATION_S = 24 * 60 * 60;
@@ -297,7 +299,7 @@ function view(
 					handoffMessage,
 				}
 			: {}),
-		// Only the starter sees the deadline: it is derived from the starter's own times.
+		// Only the starter sees the deadline (as before; it no longer depends on their times).
 		...(isStarter ? { expireTime: row.expire_time } : {}),
 		createTime: row.create_time,
 		updateTime: row.update_time,
@@ -318,7 +320,9 @@ export async function createDecision(
 	if (lastStart < now + MIN_LEAD_MS) {
 		throw new ApiError("INVALID_ARGUMENT", "None of the windows leaves room for the meeting at least an hour from now.");
 	}
-	const expire = Math.min(lastStart, now + MAX_DAYS_AHEAD * 24 * 60 * 60 * 1000);
+	// A fixed deadline: if it followed the starter's times, the other person could work out when they end.
+	const expire = now + ANSWER_DAYS * 24 * 60 * 60 * 1000;
+	const offeredUntil = Math.min(lastStart, now + MAX_DAYS_AHEAD * 24 * 60 * 60 * 1000);
 
 	const id = randomId(26);
 	const code = randomId(12);
@@ -340,6 +344,7 @@ export async function createDecision(
 		claim_id: null,
 		pending_event_id: null,
 		expire_time: iso(expire),
+		offered_until: iso(offeredUntil),
 		create_time: iso(now),
 		update_time: iso(now),
 	};
@@ -355,7 +360,7 @@ export async function createDecision(
 	};
 	await env.DB.batch([
 		env.DB.prepare(
-			"INSERT INTO decisions (id, starter_email, starter_name, duration_seconds, state, code_hash, code_used, stats_ref, expire_time, create_time, update_time) VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?)",
+			"INSERT INTO decisions (id, starter_email, starter_name, duration_seconds, state, code_hash, code_used, stats_ref, expire_time, offered_until, create_time, update_time) VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?)",
 		).bind(
 			id,
 			row.starter_email,
@@ -365,6 +370,7 @@ export async function createDecision(
 			row.code_hash,
 			row.stats_ref,
 			row.expire_time,
+			row.offered_until,
 			row.create_time,
 			row.update_time,
 		),

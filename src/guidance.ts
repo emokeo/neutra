@@ -36,7 +36,7 @@ export function nextStep(
 			}. `
 		: "";
 	if (tool === "create_decision") {
-		return `${received}Tell your person in one short sentence that the request is ready and that the other person will never see their times. Then show the handoffMessage exactly as written, for them to forward on WhatsApp, by email or anywhere.`;
+		return `${received}Tell your person in one short sentence that the request is ready and that the other person will never see their times. Then show the handoffMessage exactly as written, for them to forward on WhatsApp, by email or anywhere. Suggest they add a line of their own when forwarding, so the other person knows it really comes from them.`;
 	}
 	switch (decision.state) {
 		case "WAITING":

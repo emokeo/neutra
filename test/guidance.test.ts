@@ -8,6 +8,7 @@ describe("nextStep", () => {
 		const step = nextStep("create_decision", { state: "WAITING", meeting: {} });
 		expect(step).toMatch(/exactly as written/);
 		expect(step).toMatch(/never see their times/);
+		expect(step).toMatch(/line of their own/);
 	});
 
 	it("tells the responder how many tries are left", () => {

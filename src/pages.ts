@@ -28,7 +28,7 @@ export function homePage(connectorUrl: string): Response {
 		"Neutra",
 		`<h1>Neutra</h1>
 <p><strong>Find a time to meet, without sharing your calendar.</strong> Your AI assistant tells Neutra when you're free, the other person's assistant does the same, and Neutra sends one calendar invite to both. Neither of you ever sees the other's times.</p>
-<p>No AI on Neutra's side: Neutra is plain code that compares times. Neutra is in private testing.</p>
+<p>No AI on Neutra's side: Neutra is plain code that compares times. Neutra is new and free.</p>
 
 <h2>Got a Neutra message?</h2>
 <p>Paste the quoted line from the message into your AI assistant and add when you're free. That's it. The first time, your assistant asks you to sign in with Google: Neutra only uses your name and email, to send you the invite.</p>
@@ -76,7 +76,10 @@ export function privacyPage(): Response {
 	return page(
 		"Neutra · Privacy",
 		`<h1>Privacy</h1>
-<p>Neutra is an early project in private testing. This page says plainly what it stores and why. Last updated: 3 November 2026.</p>
+<p>Neutra is an early, free project. This page says plainly what it stores and why. Last updated: 5 November 2026.</p>
+
+<h2>Who is responsible</h2>
+<p>Neutra is run by Emoke Olti, Switzerland. Contact: <a href="mailto:${CONTACT}">${CONTACT}</a>.</p>
 
 <h2>When you sign in</h2>
 <p>We receive your name and email address from Google. Nothing else: we don't access your calendar, contacts or mail.</p>
@@ -91,20 +94,26 @@ export function privacyPage(): Response {
 <h2>Emails</h2>
 <p>If nobody answers in time, or no common time is found, the person who started the decision gets one short email from neutra.invites@gmail.com saying so.</p>
 
+<h2>Feature requests</h2>
+<p>An assistant can send us a short suggestion for a feature. We keep its text, with email addresses, links and phone numbers removed, and a pseudonymous ID per person.</p>
+
 <h2>Usage statistics</h2>
 <p>To learn whether Neutra is useful, we count what happens: for example "a decision was started from Claude" or "an answer matched on the second try". These records contain no names, email addresses or times, only a random reference per decision and a pseudonymous ID per person, so we can count distinct people. They are kept after the decision itself is deleted.</p>
 
 <h2>Calendar invites</h2>
 <p>A matched meeting is sent as a Google Calendar invite from ${CONTACT} to both people. Like any invite, it shows both email addresses.</p>
 
-<h2>Where data is kept</h2>
-<p>Decisions are stored with Cloudflare, in its EU jurisdiction. Sign-in sessions are stored with Cloudflare. Invites go through Google Calendar.</p>
+<h2>Why we may use this data</h2>
+<p>To provide what you ask for: finding a time and sending the invite (Art. 6(1)(b) GDPR). For the usage statistics and limits against abuse, our legitimate interest in running Neutra safely and learning whether it is useful (Art. 6(1)(f) GDPR). The same applies under the Swiss Federal Act on Data Protection.</p>
+
+<h2>Who processes it for us</h2>
+<p><strong>Cloudflare</strong> runs Neutra: decisions are stored in its EU jurisdiction; sign-in sessions and requests may pass through its servers worldwide. <strong>Google</strong> handles sign-in and sends the invites and notice emails (Google Calendar and Gmail). Both are US companies, so data can be transferred to the United States. Both take part in the EU-U.S. and Swiss-U.S. Data Privacy Framework.</p>
 
 <h2>What we don't do</h2>
 <p>No ads, no selling or sharing of data, no use of your data for anything other than the decisions you take part in.</p>
 
 <h2>Your rights</h2>
-<p>Write to <a href="mailto:${CONTACT}">${CONTACT}</a> to see or delete everything we hold about you.</p>
+<p>You can ask to see, correct or delete everything we hold about you, or object to its use: write to <a href="mailto:${CONTACT}">${CONTACT}</a>. You can also complain to the Swiss Federal Data Protection and Information Commissioner (FDPIC) or to the data protection authority where you live.</p>
 <p><a href="/">Back to Neutra</a></p>`,
 	);
 }

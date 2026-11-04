@@ -133,7 +133,7 @@ export function splitCombinedCode(value: string): { id: string; code: string } |
 export function handoffMessage(p: { starterName: string; decisionId: string; code: string; connectorUrl: string }): string {
 	const home = p.connectorUrl.replace(/\/mcp$/, "");
 	return `${p.starterName} would like to meet you. 👋
-Neutra finds a time that works for both of you, without either of you sharing your calendar. When it finds one, you both get a calendar invite.
+Neutra is a scheduling service for AI assistants. You each tell your own assistant when you're free, and Neutra finds a time that fits both, without either of you sharing your calendar. When it finds one, you both get a calendar invite from neutra.invites@gmail.com.
 
 To answer:
 1. Add Neutra to your AI assistant (once, about a minute): ${home}/r/${p.decisionId}

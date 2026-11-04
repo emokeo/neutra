@@ -102,6 +102,7 @@ describe("create_decision", () => {
 		const decision = await start();
 		const message = decision.handoffMessage!;
 		expect(message.startsWith("Anna would like to meet you.")).toBe(true);
+		expect(message).toContain("Neutra is a scheduling service for AI assistants.");
 		expect(message).toContain("without either of you sharing your calendar");
 		const id = decision.name.split("/")[1];
 		expect(message).toContain(`https://neutra.example.dev/r/${id}`);

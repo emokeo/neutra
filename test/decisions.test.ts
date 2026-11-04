@@ -101,13 +101,15 @@ describe("create_decision", () => {
 	it("leads the hand-off message with the reason and says how to answer", async () => {
 		const decision = await start();
 		const message = decision.handoffMessage!;
-		expect(message.startsWith("Anna would like to meet you.")).toBe(true);
-		expect(message).toContain("Neutra is a scheduling service for AI assistants.");
+		expect(message.startsWith("Anna would like to meet you and uses Neutra")).toBe(true);
 		expect(message).toContain("without either of you sharing your calendar");
 		const id = decision.name.split("/")[1];
+		// The connector address in plain sight, so an assistant that reads the message knows what to add.
+		expect(message).toContain("Add the Neutra connector to your AI assistant: https://neutra.example.dev/mcp");
 		expect(message).toContain(`https://neutra.example.dev/r/${id}`);
-		expect(message).toContain(`"Answer Neutra request neutra:${id}.${decision.code}. I'm free: …"`);
-		expect(message).toContain("Google sign-in");
+		expect(message).toContain(`Then tell your assistant: "Answer Neutra request neutra:${id}.${decision.code}. I'm free: …"`);
+		// No sign-in talk in a forwarded message: it reads like phishing to assistants.
+		expect(message).not.toMatch(/sign[- ]in/i);
 		// No date: it would hint at when the starter's offered times end.
 		expect(message).not.toMatch(/until|Nov|Wed/);
 	});

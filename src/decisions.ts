@@ -134,15 +134,16 @@ export function splitCombinedCode(value: string): { id: string; code: string } |
 /** The message the starter forwards. Plain text, so it reads well in any chat app. */
 export function handoffMessage(p: { starterName: string; decisionId: string; code: string; connectorUrl: string }): string {
 	const home = p.connectorUrl.replace(/\/mcp$/, "");
-	return `${p.starterName} would like to meet you. 👋
-Neutra is a scheduling service for AI assistants. You each tell your own assistant when you're free, and Neutra finds a time that fits both, without either of you sharing your calendar. When it finds one, you both get a calendar invite from neutra.invites@gmail.com.
+	// Written for the person, not the assistant: people paste the whole thing, and assistants distrust
+	// forwarded instructions. So: the connector address in plain sight, and one line meant for the assistant.
+	return `${p.starterName} would like to meet you and uses Neutra to find a time without either of you sharing your calendar. When it finds one, you both get a calendar invite from neutra.invites@gmail.com.
 
-To answer:
-1. Add Neutra to your AI assistant (once, about a minute): ${home}/r/${p.decisionId}
-2. Paste this to your assistant, with when you're free:
-"Answer Neutra request ${combinedCode(p.decisionId, p.code)}. I'm free: …"
+To answer (once, about a minute):
+1. Add the Neutra connector to your AI assistant: ${p.connectorUrl}
+In Claude: Settings → Connectors → Add custom connector. Steps for other assistants: ${home}/r/${p.decisionId}
+2. Then tell your assistant: "Answer Neutra request ${combinedCode(p.decisionId, p.code)}. I'm free: …"
 
-Neutra only uses your name and email from Google sign-in, to send you the invite. No AI on Neutra's side sees your times.`;
+What Neutra is and keeps: ${home}`;
 }
 
 /** Total time covered by the windows, counting overlaps once. */

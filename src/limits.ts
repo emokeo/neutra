@@ -4,9 +4,9 @@ import { personId } from "./events";
 
 export const LIMITS = {
 	/** Decisions one person may start per 24 hours. */
-	decisionsPerDay: 10,
+	decisionsPerDay: 50,
 	/** Answers (including retries) one person may send per hour. */
-	answersPerHour: 30,
+	answersPerHour: 100,
 	/** Decisions from the same starter one person may answer per 24 hours, so a starter can't probe someone with many decisions. */
 	answeredFromSameStarterPerDay: 3,
 };

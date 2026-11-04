@@ -3,7 +3,7 @@
 import { ApiError, type Caller } from "./decisions";
 import { personId } from "./events";
 
-export const FEATURE_REQUESTS_PER_DAY = 5;
+export const FEATURE_REQUESTS_PER_DAY = 20;
 const MAX_LENGTH = 500;
 const ALPHABET = "abcdefghijklmnopqrstuvwxyz234567";
 

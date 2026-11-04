@@ -31,6 +31,7 @@ When the health check says the key is refused or missing a permission:
 - To add a tester while on the allowlist: update the `ALLOWED_EMAILS` secret (comma-separated) and re-run the deploy. Removing someone takes effect on their next request.
 
 ## Numbers
+The anonymous usage events identify people by a scrambled ID derived from `COOKIE_ENCRYPTION_KEY`. Replacing that key makes returning people count as new in the stats.
 - Actions → *Stats* → Run workflow: the 14-day funnel (started, answered, matched, accepted, distinct people, requests per assistant).
 - Feature requests: Cloudflare dashboard → D1 → neutra → Console: `SELECT * FROM feature_requests ORDER BY create_time DESC`.
 

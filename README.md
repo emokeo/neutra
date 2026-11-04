@@ -23,7 +23,7 @@ It works across assistants: Anna can use Claude and Ben another assistant, as lo
 
 - **No AI on Neutra's side.** Neutra is plain code that compares time ranges. Your times never go into an AI model of ours.
 - **Nobody sees anyone's times.** Only the matched meeting time comes back. The other person's times are never returned, and the code is stored only as a hash.
-- **Times are deleted** as soon as a decision is settled. The person answering never has their times stored at all.
+- **Times are deleted** as soon as a decision is settled, at the latest after 14 days. The person answering never has their times stored at all.
 - **Retries can't map a calendar.** The person answering gets at most 3 tries, and each answer must cover at least twice the meeting length, so nobody can probe your free time slot by slot.
 - **Data stays in the EU**, in Cloudflare's EU jurisdiction.
 - **Checked by tests:** [`test/decisions.test.ts`](test/decisions.test.ts) verifies that no times or codes appear in any response.
@@ -49,6 +49,8 @@ A remote MCP server with Google sign-in. Resources follow [Google's AIPs](https:
 | `get_decision` | Status (`WAITING`, `NO_MATCH`, `INVITE_SENT`, `ACCEPTED`, `DECLINED`, `EXPIRED`) and the meeting time. |
 | `delete_decision` | Cancel a decision you started, including its invite. |
 | `get_answer` | Read your own answer. |
+| `create_feature_request` | Tell Neutra's makers about something your person wanted that Neutra can't do yet. |
+| `get_feature_request` | Read a feature request you sent. |
 
 Errors use `google.rpc` codes: `NOT_FOUND`, `PERMISSION_DENIED`, `FAILED_PRECONDITION`, `INVALID_ARGUMENT`, `RESOURCE_EXHAUSTED` (a daily or hourly limit was reached).
 
@@ -61,16 +63,16 @@ Runs on Cloudflare Workers with D1, based on Cloudflare's `remote-mcp-google-oau
 **Cloudflare**
 - Account ID and the `MCP_RESOURCE` address are in `wrangler.jsonc`. The domain `neutra.day` is attached to the Worker as a Custom Domain in the Cloudflare dashboard.
 - API token: "Edit Cloudflare Workers" template plus **D1: Edit**.
-- The D1 database (EU jurisdiction) and the `OAUTH_KV` namespace were created by the manual workflow `.github/workflows/setup.yml`; their IDs are in `wrangler.jsonc`.
+- The D1 database (EU jurisdiction) and the `OAUTH_KV` namespace were created once with `wrangler d1 create neutra --jurisdiction eu` and `wrangler kv namespace create OAUTH_KV`; their IDs are in `wrangler.jsonc`.
 
 **Google Cloud** (project `neutra`)
 - Google Auth Platform: audience External, publishing status **In production** (testing mode makes refresh tokens expire after 7 days). Branding: home page and privacy links above, authorized domain `neutra.day`.
 - Web client with redirect URI `https://neutra.day/callback` (add `https://developers.google.com/oauthplayground` only while making a new inviter key, and `http://localhost:8788/callback` for local dev).
-- Google Calendar API enabled.
-- Sign-in asks only for email and profile; access is restricted by `ALLOWED_EMAILS`, not by Google.
+- Google Calendar API and Gmail API enabled.
+- Sign-in asks only for email and profile. While `ACCESS_MODE` is `allowlist`, only `ALLOWED_EMAILS` can sign in.
 
 **Inviter** (`neutra.invites@gmail.com`)
-- Refresh token with scope `https://www.googleapis.com/auth/calendar.events`, obtained via the OAuth 2.0 Playground using the web client's own credentials.
+- Refresh token with scopes `calendar.events` and `gmail.send`, obtained via the OAuth 2.0 Playground using the web client's own credentials (steps in `docs/RUNBOOK.md`).
 
 **GitHub secrets** (Settings → Secrets and variables → Actions)
 

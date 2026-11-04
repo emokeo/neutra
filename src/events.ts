@@ -6,7 +6,8 @@ export type EventType =
 	| "invite_reply"
 	| "decision_deleted"
 	| "decision_expired"
-	| "request_failed";
+	| "request_failed"
+	| "handoff_opened";
 
 async function digest(text: string): Promise<string> {
 	const bytes = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));

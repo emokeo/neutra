@@ -95,18 +95,21 @@ describe("create_decision", () => {
 		expect(decision.state).toBe("WAITING");
 		expect(decision.code).toMatch(/^[a-z][a-z2-7]{11}$/);
 		expect(decision.handoffMessage).toContain(decision.code);
-		expect(decision.handoffMessage).toContain(decision.name);
+		expect(decision.handoffMessage).toContain(decision.name.split("/")[1]);
 	});
 
 	it("leads the hand-off message with the reason and says how to answer", async () => {
 		const decision = await start();
 		const message = decision.handoffMessage!;
 		expect(message.startsWith("Anna would like to meet you.")).toBe(true);
+		expect(message).toContain("Neutra is a scheduling service for AI assistants.");
 		expect(message).toContain("without either of you sharing your calendar");
-		expect(message).toContain("Connect the Neutra connector at https://neutra.example.dev/mcp");
-		expect(message).toContain(`with code ${decision.code}`);
-		expect(message).toContain("sign in with Google");
-		expect(message).toContain("Works until Wed 4 Nov · neutra.example.dev");
+		const id = decision.name.split("/")[1];
+		expect(message).toContain(`https://neutra.example.dev/r/${id}`);
+		expect(message).toContain(`"Answer Neutra request neutra:${id}.${decision.code}. I'm free: …"`);
+		expect(message).toContain("Google sign-in");
+		// No date: it would hint at when the starter's offered times end.
+		expect(message).not.toMatch(/until|Nov|Wed/);
 	});
 
 	it("rejects windows in the past or too far ahead, and bad durations", async () => {
@@ -196,6 +199,38 @@ describe("create_answer", () => {
 		);
 		const { decision: after } = await createAnswer(env, ben, { parent: decision.name, code: decision.code!, windows: benFree });
 		expect(after.state).toBe("INVITE_SENT");
+	});
+});
+
+describe("combined code", () => {
+	it("answers with the combined code alone", async () => {
+		const decision = await start();
+		const combined = `neutra:${decision.name.split("/")[1]}.${decision.code}`;
+		const { decision: after } = await createAnswer(env, ben, { code: combined, windows: benFree });
+		expect(after.state).toBe("INVITE_SENT");
+	});
+
+	it("accepts the code with quotes or a full stop pasted along", async () => {
+		const decision = await start();
+		const combined = `neutra:${decision.name.split("/")[1]}.${decision.code}`;
+		const { decision: after } = await createAnswer(env, ben, { code: `"${combined}."`, windows: benFree });
+		expect(after.state).toBe("INVITE_SENT");
+	});
+
+	it("says clearly when a pasted code is cut off", async () => {
+		const decision = await start();
+		const cut = `neutra:${decision.name.split("/")[1]}.${decision.code!.slice(0, 6)}`;
+		await expect(createAnswer(env, ben, { code: cut, windows: benFree })).rejects.toMatchObject({
+			code: "INVALID_ARGUMENT",
+			message: expect.stringContaining("incomplete"),
+		});
+	});
+
+	it("refuses a combined code that doesn't match the decision name", async () => {
+		const decision = await start();
+		const other = await start();
+		const combined = `neutra:${other.name.split("/")[1]}.${other.code}`;
+		await rejects(createAnswer(env, ben, { parent: decision.name, code: combined, windows: benFree }), "INVALID_ARGUMENT");
 	});
 });
 

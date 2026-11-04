@@ -7,7 +7,7 @@ Use Neutra when your person wants to meet someone and you need to agree on a tim
 Flow:
 1. Your person wants to meet someone. Ask when they're free, or read their calendar if you can and confirm the times with them before sending. Then call create_decision.
 2. Show the returned handoffMessage to your person exactly as written. They forward it to the other person in whatever chat they use.
-3. The other person's assistant calls create_answer with the decision name and code from that message.
+3. The other person's assistant calls create_answer with the code from that message ("neutra:<id>.<code>"; no decision name needed).
 4. If there is a common time, both people get a calendar invite from neutra.invites@gmail.com. Accepting it confirms the meeting. Use get_decision to see the state.
 
 Rules:

@@ -28,13 +28,13 @@ It works across assistants: Anna can use Claude and Ben another assistant, as lo
 - **Data stays in the EU**, in Cloudflare's EU jurisdiction.
 - **Checked by tests:** [`test/decisions.test.ts`](test/decisions.test.ts) verifies that no times or codes appear in any response.
 
-Details: [privacy page](https://neutra.neutra-dev.workers.dev/privacy).
+Details: [privacy page](https://neutra.day/privacy).
 
 ## Try it
 
 Neutra is in private testing. To join, write to neutra.invites@gmail.com.
 
-1. In Claude: **Settings → Connectors → Add custom connector**, URL `https://neutra.neutra-dev.workers.dev/mcp`, choose **Register automatically**.
+1. In Claude: **Settings → Connectors → Add custom connector**, URL `https://neutra.day/mcp`, choose **Register automatically**.
 2. Sign in with Google. Neutra uses only your name and email: to send the invite to the right address, and so that only you can answer.
 3. Ask: *"Use Neutra to find an hour with Ben next week. I'm free Tuesday and Thursday, 18:00–21:00."* Forward the message it gives you.
 
@@ -59,13 +59,13 @@ Runs on Cloudflare Workers with D1, based on Cloudflare's `remote-mcp-google-oau
 ### Setup (done once)
 
 **Cloudflare**
-- Account ID and the `MCP_RESOURCE` address are in `wrangler.jsonc`.
+- Account ID and the `MCP_RESOURCE` address are in `wrangler.jsonc`. The domain `neutra.day` is attached to the Worker as a Custom Domain in the Cloudflare dashboard.
 - API token: "Edit Cloudflare Workers" template plus **D1: Edit**.
 - The D1 database (EU jurisdiction) and the `OAUTH_KV` namespace were created by the manual workflow `.github/workflows/setup.yml`; their IDs are in `wrangler.jsonc`.
 
 **Google Cloud** (project `neutra`)
-- Google Auth Platform: audience External, publishing status **In production** (testing mode makes refresh tokens expire after 7 days). Branding: home page and privacy links above, authorized domain `neutra-dev.workers.dev`.
-- Web client with redirect URIs `https://neutra.neutra-dev.workers.dev/callback` and `https://developers.google.com/oauthplayground` (add `http://localhost:8788/callback` for local dev).
+- Google Auth Platform: audience External, publishing status **In production** (testing mode makes refresh tokens expire after 7 days). Branding: home page and privacy links above, authorized domain `neutra.day`.
+- Web client with redirect URI `https://neutra.day/callback` (add `https://developers.google.com/oauthplayground` only while making a new inviter key, and `http://localhost:8788/callback` for local dev).
 - Google Calendar API enabled.
 - Sign-in asks only for email and profile; access is restricted by `ALLOWED_EMAILS`, not by Google.
 

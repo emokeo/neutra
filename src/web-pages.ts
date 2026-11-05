@@ -20,7 +20,11 @@ input { min-height: 44px; font: inherit; font-size: 16px; padding: 0 6px; border
   input { background: #1f1f1f; color: #e8e8e8; border-color: #555; } .error { color: #f97066; } #add { color: #6cc4bb; border-color: #6cc4bb; } }
 `;
 
-/** No caching, no referrer (the address holds the code), no framing, scripts only with the nonce. */
+/**
+ * No caching, no framing, scripts only with the nonce. The address holds the code, so it never goes to other
+ * sites as a referrer ("same-origin": "no-referrer" would also make browsers send "Origin: null" with the form,
+ * which the cross-site check then refuses).
+ */
 function shell(title: string, body: string, opts: { status?: number; nonce?: string; script?: string } = {}): Response {
 	const html = `<!doctype html>
 <html lang="en">
@@ -42,7 +46,7 @@ ${opts.script && opts.nonce ? `<script nonce="${opts.nonce}">${opts.script}</scr
 		headers: {
 			"Content-Type": "text/html; charset=utf-8",
 			"Cache-Control": "no-store",
-			"Referrer-Policy": "no-referrer",
+			"Referrer-Policy": "same-origin",
 			"X-Robots-Tag": "noindex",
 			"Content-Security-Policy": `default-src 'none'; script-src ${opts.nonce ? `'nonce-${opts.nonce}'` : "'none'"}; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'`,
 		},

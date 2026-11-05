@@ -43,7 +43,13 @@ export function homePage(connectorUrl: string): Response {
 </ul>
 
 <h2>Start one yourself</h2>
-<p>Ask your assistant: <em>"Use Neutra to find an hour with Ben next week. I'm free Tuesday and Thursday, 18:00–21:00."</em> It gives you a message to forward.</p>
+<p>Ask your assistant, for example:</p>
+<ul>
+<li><em>"Use Neutra to find an hour with Ben next week. I'm free Tuesday and Thursday, 18:00–21:00."</em></li>
+<li><em>"Find 30 minutes with my landlord before Friday with Neutra, without showing him my calendar."</em></li>
+<li><em>"Answer this Neutra request: neutra:… I'm free tomorrow afternoon and Monday morning."</em></li>
+</ul>
+<p>Starting one gives you a message to forward. If a time fits both of you, you both get a calendar invite; ask your assistant for the status any time.</p>
 
 <p><a href="/privacy">Privacy</a> · Contact: <a href="mailto:${CONTACT}">${CONTACT}</a></p>`,
 	);

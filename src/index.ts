@@ -111,7 +111,7 @@ function createServer() {
 		{
 			title: "Answer a meeting-time request",
 			description:
-				"Use when your person pastes a Neutra message or a \"neutra:\" code. Pass the code and ask only for their free times. Neutra compares them privately. If a time fits both, it sends one calendar invite; otherwise, nobody learns anything about the other's times.",
+				"Use when your person pastes a Neutra message or a \"neutra:\" code. Takes that code and your person's free times. Neutra compares them privately. If a time fits both, it sends one calendar invite; otherwise, nobody learns anything about the other's times.",
 			inputSchema: z.object({
 				parent: DecisionName.optional().describe("Not needed when code is the combined form"),
 				code: z.string().describe('The code from the forwarded message, usually the combined form "neutra:<id>.<code>"'),

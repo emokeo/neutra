@@ -101,17 +101,17 @@ describe("create_decision", () => {
 	it("leads the hand-off message with the reason and says how to answer", async () => {
 		const decision = await start();
 		const message = decision.handoffMessage!;
-		expect(message.startsWith("Anna would like to meet you and uses Neutra")).toBe(true);
-		expect(message).toContain("without either of you sharing your calendar");
+		expect(message.startsWith("Anna wants to find a time to meet you with Neutra (neutra.example.dev).")).toBe(true);
+		expect(message).toContain("Neither of you shares your calendar");
 		const id = decision.name.split("/")[1];
-		// The connector address in plain sight, so an assistant that reads the message knows what to add.
-		expect(message).toContain("Add the Neutra connector to your AI assistant: https://neutra.example.dev/mcp");
+		// The connector address in plain sight, and why it has to be added by hand.
+		expect(message).toContain("as a custom connector (it isn't in connector directories yet): https://neutra.example.dev/mcp");
+		// What is shared, said plainly: the question a careful assistant asks before a sign-in.
+		expect(message).toContain("Neutra gets only your name and email");
 		expect(message).toContain(`https://neutra.example.dev/r/${id}`);
-		expect(message).toContain(`Then tell your assistant: "Answer Neutra request neutra:${id}.${decision.code}. I'm free: …"`);
-		// No sign-in talk in a forwarded message: it reads like phishing to assistants.
-		expect(message).not.toMatch(/sign[- ]in/i);
-		// No date: it would hint at when the starter's offered times end.
-		expect(message).not.toMatch(/until|Nov|Wed/);
+		expect(message).toContain(`Tell your assistant: "Answer Neutra request neutra:${id}.${decision.code}. I'm free: …"`);
+		// The fixed 14-day deadline (no longer tied to the starter's times).
+		expect(message).toContain("Open until Tue 17 Nov.");
 	});
 
 	it("rejects windows in the past or too far ahead, and bad durations", async () => {

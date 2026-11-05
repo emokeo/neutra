@@ -5,7 +5,7 @@ export const SERVER_INSTRUCTIONS = `Neutra lets two people's AI assistants agree
 Use Neutra when your person wants to meet someone and you need to agree on a time.
 
 Flow:
-1. Your person wants to meet someone. Ask when they're free, or read their calendar if you can and confirm the times with them before sending. Then call create_decision.
+1. Your person wants to meet someone. Ask when they're free, or read their calendar if you can and confirm the times with them before sending. If they don't say how long, use 1 hour and say so. Then call create_decision.
 2. Show the returned handoffMessage to your person exactly as written. They forward it to the other person in whatever chat they use.
 3. The other person's assistant calls create_answer with the code from that message ("neutra:<id>.<code>"; no decision name needed).
 4. If there is a common time, both people get a calendar invite from neutra.invites@gmail.com. Accepting it confirms the meeting. Use get_decision to see the state.
@@ -36,13 +36,13 @@ export function nextStep(
 			}. `
 		: "";
 	if (tool === "create_decision") {
-		return `${received}Tell your person in one short sentence that the request is ready and that the other person will never see their times. Then show the handoffMessage exactly as written, for them to forward on WhatsApp, by email or anywhere. Suggest they add a line of their own when forwarding, so the other person knows it really comes from them.`;
+		return `${received}Tell your person in one short sentence that the request is ready and that the other person will never see their times. Then show the handoffMessage exactly as written, for them to forward on WhatsApp, by email or anywhere. Offer to put one line in their own words above it (e.g. "Hi Ben, it's me, this finds us a time"), so the other person knows it really comes from them.`;
 	}
 	switch (decision.state) {
 		case "WAITING":
 			return decision.remainingAttempts !== undefined
 				? `${received}No common time yet. Ask your person for wider or other times and call create_answer again: ${decision.remainingAttempts} ${decision.remainingAttempts === 1 ? "try" : "tries"} left.`
-				: "Waiting for the other person's assistant to answer. Nothing to do until then.";
+				: "Waiting for the other person's assistant to answer. If a time is found, you both get an invite by email; no need to check back.";
 		case "INVITE_SENT":
 			return `Tell your person a time was found: ${decision.meeting.scheduledTimeLocal ?? decision.meeting.scheduledTime?.startTime}. A calendar invite from neutra.invites@gmail.com is on its way; accepting it confirms the meeting.`;
 		case "ACCEPTED":

@@ -2,7 +2,7 @@
 import { createEvent, deleteEvent, eventExists, getReplies, newEventId, type InviteReply } from "./calendar";
 import { recordEvent } from "./events";
 import { checkCreateAnswer, checkCreateDecision } from "./limits";
-import { formatRange, isValidTimeZone, parseTimestamp } from "./time";
+import { formatDay, formatRange, isValidTimeZone, parseTimestamp } from "./time";
 
 export type Caller = { email: string; name: string; client?: string };
 export type Interval = { startTime: string; endTime: string };
@@ -132,18 +132,25 @@ export function splitCombinedCode(value: string): { id: string; code: string } |
 }
 
 /** The message the starter forwards. Plain text, so it reads well in any chat app. */
-export function handoffMessage(p: { starterName: string; decisionId: string; code: string; connectorUrl: string }): string {
+export function handoffMessage(p: {
+	starterName: string;
+	decisionId: string;
+	code: string;
+	connectorUrl: string;
+	expires: string;
+}): string {
 	const home = p.connectorUrl.replace(/\/mcp$/, "");
+	const host = home.replace(/^https?:\/\//, "");
 	// Written for the person, not the assistant: people paste the whole thing, and assistants distrust
-	// forwarded instructions. So: the connector address in plain sight, and one line meant for the assistant.
-	return `${p.starterName} would like to meet you and uses Neutra to find a time without either of you sharing your calendar. When it finds one, you both get a calendar invite from neutra.invites@gmail.com.
+	// forwarded instructions. So: what Neutra is and shares, the address in plain sight, one line for the assistant.
+	return `${p.starterName} wants to find a time to meet you with Neutra (${host}). Neither of you shares your calendar: each assistant tells Neutra only when you're free, and if a time fits both of you, you both get a Google Calendar invite from neutra.invites@gmail.com.
 
-To answer (once, about a minute):
-1. Add the Neutra connector to your AI assistant: ${p.connectorUrl}
-In Claude: Settings → Connectors → Add custom connector. Steps for other assistants: ${home}/r/${p.decisionId}
-2. Then tell your assistant: "Answer Neutra request ${combinedCode(p.decisionId, p.code)}. I'm free: …"
+To answer (one-time setup, about 2 minutes):
+1. Add Neutra to your AI assistant as a custom connector (it isn't in connector directories yet): ${p.connectorUrl}
+You sign in with Google; Neutra gets only your name and email. Steps for Claude, ChatGPT and others: ${home}/r/${p.decisionId}
+2. Tell your assistant: "Answer Neutra request ${combinedCode(p.decisionId, p.code)}. I'm free: …"
 
-What Neutra is and keeps: ${home}`;
+Open until ${p.expires}.`;
 }
 
 /** Total time covered by the windows, counting overlaps once. */
@@ -393,7 +400,13 @@ export async function createDecision(
 			new Map(),
 			caller,
 			code,
-			handoffMessage({ starterName: caller.name, decisionId: id, code, connectorUrl: env.MCP_RESOURCE }),
+			handoffMessage({
+				starterName: caller.name,
+				decisionId: id,
+				code,
+				connectorUrl: env.MCP_RESOURCE,
+				expires: formatDay(expire, request.timeZone),
+			}),
 		),
 		// What Neutra understood, in the starter's own zone, so the agent can confirm it with them.
 		receivedWindows: windows.map((w) => formatRange(w.start, w.end, request.timeZone)),
@@ -472,7 +485,7 @@ export async function createAnswer(
 		throw new ApiError("FAILED_PRECONDITION", "Another answer to this decision is being processed. Try again in a moment.");
 	}
 	if (row.state !== "WAITING" || row.code_used || row.attempts >= MAX_ANSWERS) {
-		throw new ApiError("FAILED_PRECONDITION", `The decision is ${row.state}, not WAITING.`);
+		throw new ApiError("FAILED_PRECONDITION", `This request has ended (${row.state}). Ask the person who sent it to start a new one.`);
 	}
 	const windows = parseWindows(request.windows, now, request.timeZone);
 	requireBreadth(windows, row.duration_seconds, now);

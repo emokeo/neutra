@@ -58,7 +58,7 @@ export async function createEvent(
 		body: JSON.stringify({
 			id: event.id,
 			summary: event.summary,
-			description: "Arranged by Neutra.",
+			description: `Arranged by Neutra (${env.MCP_RESOURCE.replace(/^https?:\/\//, "").replace(/\/mcp$/, "")}): found without either of you sharing your calendar.`,
 			start: { dateTime: event.start },
 			end: { dateTime: event.end },
 			attendees: event.attendees.map((email) => ({ email })),

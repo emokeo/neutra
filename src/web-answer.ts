@@ -72,6 +72,12 @@ function stateGuard(info: WebRequest, signedIn: WebSession | null): Response | n
 			`<p>This request was answered with another Google account. If you still want to meet, ask ${who} to send a new request.</p>`,
 		);
 	}
+	if (info.pending) {
+		return messagePage(
+			"Almost there",
+			`<p>An answer to this request is being processed, and the invite may be on its way. Look for an email from neutra.invites@gmail.com, or open this link again in a few minutes.</p>`,
+		);
+	}
 	if (info.state === "INVITE_SENT" || info.state === "ACCEPTED" || info.state === "DECLINED") {
 		if (info.viewer === "responder" && signedIn && info.scheduledTimeLocal) {
 			return messagePage(
@@ -114,7 +120,8 @@ function renderForm(
 		// Empty on the first visit: the page fills in the browser's own time zone.
 		timeZone: extra.timeZone,
 		minDay: isoDay(now, zone),
-		maxDay: isoDay(now + 30 * 24 * 60 * 60 * 1000, zone),
+		// 29, not 30: Neutra refuses times starting more than 30 days from now, and the last day's evening would be past that.
+		maxDay: isoDay(now + 29 * 24 * 60 * 60 * 1000, zone),
 		minimum: durationText(2 * info.durationSeconds),
 		notice: extra.notice,
 		error: extra.error,
@@ -133,7 +140,9 @@ WebAnswer.get("/a/:token", async (c) => {
 	if (!info) return notFound();
 	const guard = stateGuard(info, signedIn);
 	if (guard) return guard;
-	if (!signedIn) return introPage(invitation(info, networkZone(c.req.raw)), token);
+	if (!signedIn) {
+		return introPage(invitation(info, networkZone(c.req.raw)), token, c.req.query("expired") === "1");
+	}
 	// After an answer that didn't fit: say so above the form. Neither side learns anything about the other's times.
 	const tried = info.viewer === "responder" && info.remainingAttempts < MAX_ANSWERS;
 	return renderForm(c.req.raw, info, signedIn, token, {
@@ -153,7 +162,8 @@ WebAnswer.post("/a/:token", async (c) => {
 	const origin = c.req.header("origin");
 	if (origin && origin !== self.origin) return c.text("Forbidden", 403);
 	const signedIn = await session(c.env, c.req.raw);
-	if (!signedIn) return c.redirect(back, 303);
+	// Signed out in the meantime (the sign-in lasts an hour): say so on the sign-in page.
+	if (!signedIn) return c.redirect(`${back}?expired=1`, 303);
 	const info = await webRequest(c.env, parsed.id, parsed.code, signedIn.email);
 	if (!info) return notFound();
 	if (stateGuard(info, signedIn)) return c.redirect(back, 303);
@@ -192,7 +202,9 @@ WebAnswer.post("/a/:token", async (c) => {
 				`Add more times: together at least ${durationText(2 * info.durationSeconds)}, each at least ${durationText(info.durationSeconds)} long and starting an hour from now or later.`,
 			);
 		}
-		if (error.reason === "OUT_OF_RANGE") return again("Your times need to be in the future and within the next 30 days.");
+		if (error.reason === "OUT_OF_RANGE") {
+			return again("One of your times has already passed or is more than 30 days ahead. Check the days and try again.");
+		}
 		if (error.reason === "UNCONFIRMED") {
 			return messagePage(
 				"Neutra couldn't confirm the invite",
@@ -200,10 +212,13 @@ WebAnswer.post("/a/:token", async (c) => {
 				502,
 			);
 		}
-		if (error.code === "INVALID_ARGUMENT" || error.code === "RESOURCE_EXHAUSTED" || error.code === "FAILED_PRECONDITION") {
-			return again(error.message, error.code === "RESOURCE_EXHAUSTED" ? 429 : 400);
+		// The other errors are worded for assistants, so the page says it in its own words.
+		if (error.reason === "SAME_STARTER_LIMIT") {
+			return again(`You've already answered 3 requests from ${info.starterFirstName} in the last 24 hours. Please try again tomorrow.`, 429);
 		}
-		// Someone else answered, or this is the starter: the request page explains.
+		if (error.code === "RESOURCE_EXHAUSTED") return again("You've sent a lot of answers in the last hour. Please try again later.", 429);
+		if (error.code === "INVALID_ARGUMENT") return again("Neutra couldn't read these times. Check each day and time and try again.");
+		// The request ended, is being answered, or someone else answered: the request page explains.
 		return c.redirect(back, 303);
 	}
 	// Post, then redirect: reloading the result page must never send the answer again.

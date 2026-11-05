@@ -1,5 +1,5 @@
 // Rate limits: keep Neutra usable for everyone and make probing or spamming impractical.
-import { ApiError } from "./decisions";
+import { ApiError, type ErrorReason } from "./decisions";
 import { personId } from "./events";
 
 export const LIMITS = {
@@ -13,8 +13,8 @@ export const LIMITS = {
 
 const HOUR = 60 * 60 * 1000;
 
-function tooMany(what: string): never {
-	throw new ApiError("RESOURCE_EXHAUSTED", `Limit reached: ${what}. Try again later.`);
+function tooMany(what: string, reason?: ErrorReason): never {
+	throw new ApiError("RESOURCE_EXHAUSTED", `Limit reached: ${what}. Try again later.`, reason);
 }
 
 export async function checkCreateDecision(env: Env, email: string, now = Date.now()): Promise<void> {
@@ -31,7 +31,7 @@ export async function checkCreateAnswer(env: Env, email: string, starterEmail: s
 	const answers = await env.DB.prepare("SELECT COUNT(*) AS n FROM events WHERE person = ? AND type = 'answer_submitted' AND create_time > ?")
 		.bind(person, hourAgo)
 		.first<{ n: number }>();
-	if ((answers?.n ?? 0) >= LIMITS.answersPerHour) tooMany(`${LIMITS.answersPerHour} answers per hour`);
+	if ((answers?.n ?? 0) >= LIMITS.answersPerHour) tooMany(`${LIMITS.answersPerHour} answers per hour`, "ANSWER_LIMIT");
 
 	const dayAgo = new Date(now - 24 * HOUR).toISOString();
 	const sameStarter = await env.DB.prepare(
@@ -40,6 +40,6 @@ export async function checkCreateAnswer(env: Env, email: string, starterEmail: s
 		.bind(starterEmail, email, decisionId, dayAgo)
 		.first<{ n: number }>();
 	if ((sameStarter?.n ?? 0) >= LIMITS.answeredFromSameStarterPerDay) {
-		tooMany(`${LIMITS.answeredFromSameStarterPerDay} decisions from the same person per day`);
+		tooMany(`${LIMITS.answeredFromSameStarterPerDay} decisions from the same person per day`, "SAME_STARTER_LIMIT");
 	}
 }

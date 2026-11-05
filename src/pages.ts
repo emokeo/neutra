@@ -36,7 +36,7 @@ export function homePage(connectorUrl: string): Response {
 <ol class="steps">
 <li><strong>You ask your assistant.</strong> <em>"Find an hour with Ben next week. I'm free Tuesday and Thursday evening."</em> It gives you a short message to send Ben, by WhatsApp or anywhere:
 <div class="box">Anna wants to find a time to meet you with Neutra. Neither of you shares your calendar … Tell your assistant: "Answer Neutra request neutra:… I'm free: …"</div></li>
-<li><strong>Ben's assistant answers</strong> with when he's free. Neutra compares the two privately.</li>
+<li><strong>Ben's assistant answers</strong> with when he's free. Neutra compares the two privately. No assistant? The message also has a link where Ben signs in with Google and adds his times in the browser.</li>
 <li><strong>You both get one invite:</strong>
 <div class="box"><strong>Anna &amp; Ben</strong> · Thu 12 Nov, 19:00–20:00<br>Arranged by Neutra: found without either of you sharing your calendar.</div></li>
 </ol>
@@ -84,6 +84,7 @@ export function requestPage(starterName: string | null, connectorUrl: string): R
 
 <h2>2. Paste the line from the message</h2>
 <p>Paste the line in quotes from the message into your assistant, and add when you're free. That's it. If no time fits, nobody learns anything about the other's times, and you can try again with more times.</p>
+<p><strong>No AI assistant?</strong> Open the browser link at the end of the message instead: sign in with Google and add the times you're free.</p>
 
 <p><a href="/">What is Neutra?</a> · <a href="/privacy">Privacy</a></p>`,
 	);
@@ -102,7 +103,7 @@ export function privacyPage(): Response {
 <p>We receive your name and email address from Google. Nothing else: we don't access your calendar, contacts or mail. If you answer a request in your browser instead of through an assistant, a cookie keeps you signed in for up to an hour.</p>
 
 <h2>Your available times</h2>
-<p>Your assistant sends the times you're free for one decision. They are never shown to anyone else. The times of the person answering are never stored at all. The starter's times are deleted as soon as the decision is matched or ends, at most 14 days after it started.</p>
+<p>Your assistant, or the answer page in your browser, sends the times you're free for one decision. They are never shown to anyone else. The times of the person answering are never stored at all. The starter's times are deleted as soon as the decision is matched or ends, at most 14 days after it started.</p>
 
 <h2>Decisions</h2>
 <p>For each decision we keep the participants' names and email addresses, its state and, if one was found, the meeting time. <strong>Everything about a decision is deleted 7 days after its meeting ends</strong>, or 7 days after it ended without a meeting. The person who started a decision can delete it earlier at any time, which also cancels the invite.</p>

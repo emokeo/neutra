@@ -17,7 +17,7 @@ sequenceDiagram
     N-->>B: calendar invite
 ```
 
-It works across assistants: Anna can use Claude and Ben another assistant, as long as both support MCP connectors.
+It works across assistants: Anna can use Claude and Ben another assistant, as long as both support MCP connectors. Ben can also answer without an assistant: the message includes a link to a simple page where he signs in with Google and adds the times he's free.
 
 ## Privacy, by design
 
@@ -65,7 +65,7 @@ Runs on Cloudflare Workers with D1, based on Cloudflare's `remote-mcp-google-oau
 
 **Google Cloud** (project `neutra`)
 - Google Auth Platform: audience External, publishing status **In production** (testing mode makes refresh tokens expire after 7 days). Branding: home page and privacy links above, authorized domain `neutra.day`.
-- Web client with redirect URI `https://neutra.day/callback` (add `https://developers.google.com/oauthplayground` only while making a new inviter key, and `http://localhost:8788/callback` for local dev).
+- Web client with redirect URI `https://neutra.day/callback`, used by both the connector sign-in and the browser answer page (add `https://developers.google.com/oauthplayground` only while making a new inviter key, and `http://localhost:8788/callback` for local dev).
 - Google Calendar API and Gmail API enabled.
 - Sign-in asks only for email and profile. While `ACCESS_MODE` is `allowlist`, only `ALLOWED_EMAILS` can sign in.
 

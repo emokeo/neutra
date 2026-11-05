@@ -72,8 +72,9 @@ async function run(tool: string, caller: Caller | undefined, action: (caller: Ca
 		const code = error instanceof ApiError ? error.code : "INTERNAL";
 		console.log(JSON.stringify({ tool, outcome: code }));
 		// The reason (e.g. TOO_NARROW) shows how often people hit a rule, without any of their data.
-		const reason = error instanceof ApiError && error.reason ? { reason: error.reason } : {};
-		await recordEvent(env, { type: "request_failed", client: caller.client, email: caller.email, detail: { tool, code, ...reason } });
+		const detail: Record<string, string> = { tool, code };
+		if (error instanceof ApiError && error.reason) detail.reason = error.reason;
+		await recordEvent(env, { type: "request_failed", client: caller.client, email: caller.email, detail });
 		return fail(error);
 	}
 }

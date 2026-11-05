@@ -185,7 +185,7 @@ WebAnswer.post("/a/:token", async (c) => {
 			type: "request_failed",
 			client: "web",
 			email: signedIn.email,
-			detail: { tool: "create_answer", code: error.code, ...(error.reason ? { reason: error.reason } : {}) },
+			detail: error.reason ? { tool: "create_answer", code: error.code, reason: error.reason } : { tool: "create_answer", code: error.code },
 		});
 		if (error.reason === "TOO_NARROW") {
 			return again(

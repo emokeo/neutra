@@ -20,8 +20,13 @@ jobs:
       - name: Funnel
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          ALLOWED_EMAILS: ${{ secrets.ALLOWED_EMAILS }}
+          COOKIE_ENCRYPTION_KEY: ${{ secrets.COOKIE_ENCRYPTION_KEY }}
         run: |
-          out=$(npx wrangler d1 execute neutra --remote --json --file scripts/funnel.sql)
-          table=$(echo "$out" | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{const rows=JSON.parse(s).at(-1).results;console.log(rows.map(r=>r.step+': '+r.n).join('%0A'))})")
+          # The person IDs of you and your testers, computed like src/events.ts, so they can be left out.
+          team=$(node -e "const c=require('crypto');const ids=(process.env.ALLOWED_EMAILS||'').split(',').map(e=>e.trim().toLowerCase()).filter(Boolean).map(e=>\"'\"+c.createHash('sha256').update(process.env.COOKIE_ENCRYPTION_KEY+':'+e).digest('hex').slice(0,16)+\"'\");console.log(ids.join(',')||\"''\")")
+          sql=$(grep -v '^--' scripts/funnel.sql | sed "s/TEAM_IDS/$team/g; s/RECENT/create_time > strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '-14 days')/g")
+          out=$(npx wrangler d1 execute neutra --remote --json --command "$sql" 2>err.log) || { echo "::error::$( (echo "$out"; cat err.log) | tail -c 1500 | tr '\n' ' ')"; exit 1; }
+          table=$(echo "$out" | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{const rows=JSON.parse(s).flatMap(r=>r.results);console.log(rows.map(r=>r.step+': '+r.n).join('%0A'))})")
           echo "::notice title=Funnel (14 days)::$table"
           echo "$table" | sed 's/%0A/\n/g' | sed 's/^/- /' >> "$GITHUB_STEP_SUMMARY"

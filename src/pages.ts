@@ -38,7 +38,7 @@ export function homePage(connectorUrl: string): Response {
 <div class="box">Anna wants to find a time to meet you with Neutra. Neither of you shares your calendar … Tell your assistant: "Answer Neutra request neutra:… I'm free: …"</div></li>
 <li><strong>Ben's assistant answers</strong> with when he's free. Neutra compares the two privately. No assistant? The message also has a link where Ben signs in with Google and adds his times in the browser.</li>
 <li><strong>You both get one invite:</strong>
-<div class="box"><strong>Anna &amp; Ben</strong> · Thu 12 Nov, 19:00–20:00<br>Arranged by Neutra: found without either of you sharing your calendar.</div></li>
+<div class="box"><strong>Anna &amp; Ben</strong> · Thu 12 Nov, 19:00–20:00<br>Set up by Neutra, with a Google Meet link.</div></li>
 </ol>
 
 <h2>What if no time fits?</h2>
@@ -119,7 +119,7 @@ export function privacyPage(): Response {
 <p>To learn whether Neutra is useful, we count what happens: for example "a decision was started from Claude" or "an answer matched on the second try". These records contain no names, email addresses or times, only a random reference per decision and a pseudonymous ID per person, so we can count distinct people. They are kept after the decision itself is deleted.</p>
 
 <h2>Calendar invites</h2>
-<p>A matched meeting is sent as a Google Calendar invite from ${CONTACT} to both people. Like any invite, it shows both email addresses.</p>
+<p>A matched meeting is sent as a Google Calendar invite from ${CONTACT} to both people. Like any invite, it shows both email addresses. It includes a Google Meet video link; if you use it, the call runs on Google Meet.</p>
 
 <h2>Why we may use this data</h2>
 <p>To provide what you ask for: finding a time and sending the invite (Art. 6(1)(b) GDPR). For the usage statistics and limits against abuse, our legitimate interest in running Neutra safely and learning whether it is useful (Art. 6(1)(f) GDPR). The same applies under the Swiss Federal Act on Data Protection.</p>

@@ -48,22 +48,40 @@ export function newEventId(): string {
 }
 
 /** Creates the event under the given ID. If it already exists (a retried call), that counts as done. */
+/** The invite's text. Plain, for people: who set it up, how to meet, what to do if it doesn't work. */
+export function inviteDescription(env: Env): string {
+	const home = env.MCP_RESOURCE.replace(/^https?:\/\//, "").replace(/\/mcp$/, "");
+	return `Set up by Neutra (${home}).
+Join with the Google Meet link, or pick a place between you. Agreeing on the place through Neutra is coming soon!
+Can't make it? Decline this invite and the other person will see it.`;
+}
+
 export async function createEvent(
 	env: Env,
 	event: { id: string; summary: string; start: string; end: string; attendees: string[] },
 ): Promise<string> {
-	const response = await google(env, `${CALENDAR}?sendUpdates=all`, {
-		method: "POST",
-		headers: { "Content-Type": "application/json" },
-		body: JSON.stringify({
-			id: event.id,
-			summary: event.summary,
-			description: `Arranged by Neutra (${env.MCP_RESOURCE.replace(/^https?:\/\//, "").replace(/\/mcp$/, "")}): found without either of you sharing your calendar.`,
-			start: { dateTime: event.start },
-			end: { dateTime: event.end },
-			attendees: event.attendees.map((email) => ({ email })),
-		}),
-	});
+	const body = {
+		id: event.id,
+		summary: event.summary,
+		description: inviteDescription(env),
+		start: { dateTime: event.start },
+		end: { dateTime: event.end },
+		attendees: event.attendees.map((email) => ({ email })),
+	};
+	// Google adds a Meet link when asked; the event ID doubles as the request ID, so retries ask only once.
+	const withMeet = { ...body, conferenceData: { createRequest: { requestId: event.id, conferenceSolutionKey: { type: "hangoutsMeet" } } } };
+	const send = (payload: object, meet: boolean) =>
+		google(env, `${CALENDAR}?sendUpdates=all${meet ? "&conferenceDataVersion=1" : ""}`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify(payload),
+		});
+	let response = await send(withMeet, true);
+	if (response.status === 400) {
+		// If Google refuses the Meet link, the invite matters more: send it without one.
+		console.error("invite with Meet refused, sending without", await response.text().catch(() => ""));
+		response = await send(body, false);
+	}
 	if (!response.ok && response.status !== 409) {
 		throw new Error(`Creating the calendar event failed: ${response.status}`);
 	}

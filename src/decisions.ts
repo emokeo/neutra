@@ -84,6 +84,11 @@ async function sha256(text: string): Promise<string> {
 	return Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, "0")).join("");
 }
 
+/** "Anna" from "Anna Muster": invites and pages use first names. */
+function firstName(name: string): string {
+	return name.trim().split(/\s+/)[0] || name;
+}
+
 function same(a: string, b: string): boolean {
 	return a.trim().toLowerCase() === b.trim().toLowerCase();
 }
@@ -575,7 +580,7 @@ export async function createAnswer(
 		try {
 			await createEvent(env, {
 				id: eventId,
-				summary: `${row.starter_name} & ${caller.name}`,
+				summary: `${firstName(row.starter_name)} & ${firstName(caller.name)}`,
 				start: iso(match.start),
 				end: iso(match.end),
 				attendees: [row.starter_email, caller.email],
@@ -703,7 +708,7 @@ export async function webRequest(env: Env, id: string, code: string, viewerEmail
 		);
 	}
 	return {
-		starterFirstName: row.starter_name.trim().split(/\s+/)[0] || "Someone",
+		starterFirstName: firstName(row.starter_name) || "Someone",
 		durationSeconds: row.duration_seconds,
 		answerBy: Date.parse(row.expire_time),
 		state: (row.state === "MATCHING" ? "WAITING" : row.state) as State,

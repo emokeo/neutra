@@ -55,7 +55,7 @@ export function homePage(connectorUrl: string): Response {
 <li><em>"Answer this Neutra request: neutra:… I'm free tomorrow afternoon and Monday morning."</em></li>
 </ul>
 
-<h2>Add Neutra to your assistant (once, about 2 minutes)</h2>
+<h2 id="add">Add Neutra to your assistant (once, about 2 minutes)</h2>
 <p>Assistants use add-ons called connectors. Neutra's address is <code>${connectorUrl}</code>; it isn't in connector directories yet, so you add it by hand:</p>
 <details><summary>Claude</summary><p>Customize → Connectors → Add custom connector → paste the address → Add → sign in with Google. If your phone app can't add it, add it once on claude.ai; it then works in the app too.</p></details>
 <details><summary>ChatGPT</summary><p>Needs Developer mode (Settings → Apps), which not every plan has. Then add the address as a new app and sign in.</p></details>
@@ -99,7 +99,7 @@ export function privacyPage(): Response {
 <p>Neutra is run by Emoke Olti, Switzerland. Contact: <a href="mailto:${CONTACT}">${CONTACT}</a>.</p>
 
 <h2>When you sign in</h2>
-<p>We receive your name and email address from Google. Nothing else: we don't access your calendar, contacts or mail.</p>
+<p>We receive your name and email address from Google. Nothing else: we don't access your calendar, contacts or mail. If you answer a request in your browser instead of through an assistant, a cookie keeps you signed in for up to an hour.</p>
 
 <h2>Your available times</h2>
 <p>Your assistant sends the times you're free for one decision. They are never shown to anyone else. The times of the person answering are never stored at all. The starter's times are deleted as soon as the decision is matched or ends, at most 14 days after it started.</p>

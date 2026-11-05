@@ -1,14 +1,21 @@
 // Simulates the Google endpoints Neutra calls: token refresh and Calendar events.
 import { vi } from "vitest";
 
-export type FakeEvent = { summary: string; start: string; end: string; attendees: { email: string; responseStatus: string }[] };
+export type FakeEvent = {
+	summary: string;
+	description?: string;
+	meet: boolean;
+	start: string;
+	end: string;
+	attendees: { email: string; responseStatus: string }[];
+};
 
 export function fakeGoogle() {
 	const events = new Map<string, FakeEvent>();
 	const emails: { raw: string }[] = [];
 	let next = 1;
 	// Set to make the next event creation fail: "before" fails without creating, "after" creates and then fails.
-	const failures = { create: null as null | "before" | "after", read: false };
+	const failures = { create: null as null | "before" | "after", read: false, meet: false };
 	const fetch = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
 		const url = new URL(typeof input === "string" ? input : input instanceof URL ? input.href : input.url);
 		const method = init?.method ?? "GET";
@@ -33,9 +40,14 @@ export function fakeGoogle() {
 				failures.create = null;
 				return json({ error: "backend error" }, 503);
 			}
+			const meet = !!body.conferenceData && url.searchParams.get("conferenceDataVersion") === "1";
+			// Simulates Google refusing the Meet link (e.g. not allowed for the account).
+			if (body.conferenceData && failures.meet) return json({ error: "invalid conference type" }, 400);
 			if (events.has(eventId)) return json({ error: "duplicate" }, 409);
 			events.set(eventId, {
 				summary: body.summary,
+				description: body.description,
+				meet,
 				start: body.start.dateTime,
 				end: body.end.dateTime,
 				attendees: body.attendees.map((a: { email: string }) => ({ email: a.email, responseStatus: "needsAction" })),

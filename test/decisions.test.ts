@@ -146,6 +146,11 @@ describe("create_answer", () => {
 		const [event] = [...google.events.values()];
 		expect(google.events.size).toBe(1);
 		expect(event.summary).toBe("Anna & Ben");
+		// The invite asks Google for a Meet link and says, for people, who set it up and what to do.
+		expect(event.meet).toBe(true);
+		expect(event.description).toBe(
+			"Set up by Neutra (neutra.example.dev).\nJoin with the Google Meet link, or pick a place between you. Agreeing on the place through Neutra is coming soon!\nCan't make it? Decline this invite and the other person will see it.",
+		);
 		expect(event.attendees.map((a) => a.email)).toEqual([anna.email, ben.email]);
 
 		const own = await getAnswer(env, ben, answer.name);
@@ -162,6 +167,17 @@ describe("create_answer", () => {
 		expect(error.message).toContain("This answer was not counted as a try.");
 		const next = await createAnswer(env, ben, { parent: decision.name, code: decision.code!, windows: benBusyThen });
 		expect(next.decision.remainingAttempts).toBe(2);
+	});
+
+	it("still sends the invite, without a Meet link, if Google refuses the link", async () => {
+		google.failures.meet = true;
+		const decision = await start();
+		const { decision: after } = await createAnswer(env, { email: "ben@example.com", name: "Ben Example" }, { parent: decision.name, code: decision.code!, windows: benFree });
+		expect(after.state).toBe("INVITE_SENT");
+		const [event] = [...google.events.values()];
+		expect(event.meet).toBe(false);
+		// First names only.
+		expect(event.summary).toBe("Anna & Ben");
 	});
 
 	it("after no match, the same person may retry twice; then it ends as NO_MATCH", async () => {

@@ -10,8 +10,10 @@ const STYLE = `
 body { font: 16px/1.5 system-ui, sans-serif; max-width: 480px; margin: 32px auto; padding: 0 16px; color: #1a1a1a; background: #fff; }
 a { color: #0f5f5a; } h1 { font-size: 1.5rem; line-height: 1.2; } .muted { color: #5c5c5c; font-size: 0.9rem; }
 .error { color: #b42318; font-weight: 600; } .hint { color: #5c5c5c; font-size: 0.9rem; }
-.row { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; padding-bottom: 12px; margin-bottom: 12px; border-bottom: 1px solid #e4e4e0; }
-.row .day { grid-column: 1 / -1; }
+.row { display: grid; grid-template-columns: 1fr 1fr 44px; gap: 6px; padding-bottom: 12px; margin-bottom: 12px; border-bottom: 1px solid #e4e4e0; }
+.row .day { grid-column: 1 / 3; }
+.row .rm { grid-column: 3; grid-row: 1; align-self: end; width: 44px; height: 44px; border: none; background: none; color: #5c5c5c; font-size: 22px; cursor: pointer; border-radius: 8px; }
+.row .rm:focus-visible, #add:focus-visible { outline: 2px solid #0f5f5a; outline-offset: 2px; }
 .row label { display: flex; flex-direction: column; font-size: 12px; color: #5c5c5c; }
 input { min-height: 44px; font: inherit; font-size: 16px; padding: 0 6px; border: 1px solid #cfcfcb; border-radius: 8px; width: 100%; box-sizing: border-box; }
 .button { display: block; width: 100%; min-height: 50px; border: none; border-radius: 12px; background: #0f5f5a; color: #fff; font: inherit;
@@ -78,6 +80,7 @@ function rowHtml(row: Row, min: string, max: string): string {
 <label class="day">Day<input type="date" name="day" value="${esc(row.day)}" min="${min}" max="${max}"></label>
 <label>From<input type="time" name="from" value="${esc(row.from)}"></label>
 <label>To<input type="time" name="to" value="${esc(row.to)}"></label>
+<button type="button" class="rm" aria-label="Remove this time" hidden>×</button>
 </div>`;
 }
 
@@ -90,25 +93,44 @@ const SCRIPT = `(() => {
   const add = document.getElementById("add");
   const rows = document.getElementById("rows");
   add.hidden = false;
+  rows.querySelectorAll(".rm").forEach((button) => { button.hidden = false; });
   add.addEventListener("click", () => {
     if (rows.children.length >= ${MAX_ROWS}) return;
     const row = rows.lastElementChild.cloneNode(true);
     row.querySelectorAll("input").forEach((input) => { input.value = ""; });
     rows.append(row);
+    row.querySelector("input").focus();
+    update();
   });
-  // The same rule as Neutra's: times shorter than the meeting don't count, and overlapping
-  // or repeated times count once. Past times still count here, so the server stays the stricter check.
+  // Remove a row; the last one is cleared instead, so there's always one to fill in.
+  rows.addEventListener("click", (event) => {
+    const button = event.target.closest(".rm");
+    if (!button) return;
+    const row = button.closest(".row");
+    if (rows.children.length > 1) row.remove();
+    else row.querySelectorAll("input").forEach((input) => { input.value = ""; });
+    update();
+  });
+  // The same rule as Neutra's: only time from an hour from now to 30 days ahead counts, in pieces at
+  // least as long as the meeting, and overlapping or repeated times count once. Times are read in this
+  // browser's time zone, the one the answer is sent with.
   const meeting = Number(form.dataset.meeting);
   const status = document.getElementById("enough");
-  const text = (m) => { const h = Math.floor(m / 60), r = m % 60; return [h ? h + (h === 1 ? " hour" : " hours") : "", r ? r + " min" : ""].filter(Boolean).join(" ") || "0 min"; };
-  const covered = () => {
+  const text = (m) => { const h = Math.floor(m / 60), r = Math.round(m % 60); return [h ? h + (h === 1 ? " hour" : " hours") : "", r ? r + " min" : ""].filter(Boolean).join(" ") || "0 min"; };
+  const check = () => {
+    const from0 = Date.now() + 60 * 60 * 1000, to0 = Date.now() + 30 * 24 * 60 * 60 * 1000;
     const spans = [];
+    let n = 0, problem = "";
     for (const row of rows.children) {
+      n++;
       const [day, from, to] = row.querySelectorAll("input");
       if (!day.value || !from.value || !to.value) continue;
-      const start = Date.parse(day.value + "T" + from.value.slice(0, 5) + "Z");
-      let end = Date.parse(day.value + "T" + to.value.slice(0, 5) + "Z");
-      if (to.value.slice(0, 5) === "00:00") end += 24 * 60 * 60 * 1000;
+      const f = from.value.slice(0, 5), t = to.value.slice(0, 5);
+      if (t <= f && t !== "00:00") { problem = problem || "Time " + n + " ends before it starts."; continue; }
+      let start = new Date(day.value + "T" + f).getTime();
+      let end = new Date(day.value + "T" + t).getTime();
+      if (t === "00:00") end += 24 * 60 * 60 * 1000;
+      start = Math.max(start, from0); end = Math.min(end, to0);
       if (end - start >= meeting * 60 * 1000) spans.push([start, end]);
     }
     spans.sort((a, b) => a[0] - b[0]);
@@ -118,19 +140,20 @@ const SCRIPT = `(() => {
       total += end - Math.max(start, reach);
       reach = end;
     }
-    return total / 60000;
+    return { total: total / 60000, problem };
   };
   const update = () => {
-    const total = covered();
-    const ok = total >= 2 * meeting;
-    status.textContent = ok
-      ? "Added: " + text(total) + ". Enough to send."
-      : "Added so far: " + text(total) + ". Add at least " + text(2 * meeting) + " in total, each time at least " + text(meeting) + " long. Times that overlap count once.";
+    const { total, problem } = check();
+    const ok = !problem && total >= 2 * meeting;
+    status.textContent = problem
+      ? problem + " For a time past midnight, add the next day as its own time."
+      : ok
+        ? "Added: " + text(total) + ". Enough to send."
+        : "Added so far: " + text(total) + ". Add at least " + text(2 * meeting) + " in total, each time at least " + text(meeting) + " long and starting an hour from now or later. Times that overlap count once.";
     status.className = ok ? "muted" : "hint";
     return ok;
   };
   rows.addEventListener("input", update);
-  add.addEventListener("click", update);
   update();
   form.addEventListener("submit", (event) => {
     if (!update()) { event.preventDefault(); status.className = "error"; status.focus(); return; }
@@ -169,6 +192,7 @@ ${p.error ? `<p class="error" role="alert">${esc(p.error)}</p>` : ""}
 <div id="rows">
 ${rows.map((row) => rowHtml(row, p.minDay, p.maxDay)).join("\n")}
 </div>
+<p class="hint">Past midnight? Add the next day as its own time.</p>
 <button type="button" id="add" hidden>+ Add another time</button>
 <input type="hidden" name="tz" value="${esc(p.timeZone ?? "")}">
 <p id="enough" class="muted" tabindex="-1" aria-live="polite"></p>

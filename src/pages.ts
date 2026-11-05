@@ -2,13 +2,48 @@
 
 const CONTACT = "neutra.invites@gmail.com";
 
-function page(title: string, body: string): Response {
+const DESCRIPTION = "Your AI assistant and theirs find a time to meet. You both get one calendar invite; neither of you sees the other's calendar.";
+
+/** Link previews in chat apps and social sites (title, text and the 1200×630 card at /og.png). */
+function preview(title: string, home: string): string {
+	return `<meta name="description" content="${DESCRIPTION}">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Neutra">
+<meta property="og:title" content="${title}">
+<meta property="og:description" content="${DESCRIPTION}">
+<meta property="og:url" content="${home}/">
+<meta property="og:image" content="${home}/og.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="Neutra: find a time to meet, without sharing your calendar.">
+<meta name="twitter:card" content="summary_large_image">`;
+}
+
+/** The address of the connector with a Copy button (the script below makes it work). */
+function address(url: string): string {
+	return `<span class="addr"><code>${url}</code> <button type="button" class="copy" data-copy="${url}">Copy</button></span>`;
+}
+
+const COPY_SCRIPT = `<script>
+document.querySelectorAll(".copy").forEach((button) => button.addEventListener("click", async () => {
+  try { await navigator.clipboard.writeText(button.dataset.copy); button.textContent = "Copied"; }
+  catch (e) {
+    const range = document.createRange(); range.selectNodeContents(button.previousElementSibling);
+    const selection = getSelection(); selection.removeAllRanges(); selection.addRange(range);
+    button.textContent = "Selected, now copy";
+  }
+  setTimeout(() => { button.textContent = "Copy"; }, 2500);
+}));
+</script>`;
+
+function page(title: string, body: string, home?: string): Response {
 	const html = `<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${title}</title>
+${home ? preview(title, home) : ""}
 <style>
   body { font: 16px/1.6 system-ui, sans-serif; max-width: 640px; margin: 48px auto; padding: 0 16px; color: #1a1a1a; background: #fff; }
   h1 { font-size: 1.6rem; } h2 { font-size: 1.1rem; margin-top: 2rem; }
@@ -16,21 +51,49 @@ function page(title: string, body: string): Response {
   .box { border: 1px solid #d8d8d8; border-radius: 10px; padding: 10px 14px; margin: 8px 0 4px; background: #f7f7f5; font-size: 0.92rem; }
   ol.steps > li { margin-bottom: 1rem; }
   details { margin: 6px 0; } summary { cursor: pointer; font-weight: 600; }
-  @media (prefers-color-scheme: dark) { body { color: #e8e8e8; background: #141414; } a { color: #7aa7ff; } .box { background: #1f1f1f; border-color: #3a3a3a; } }
+  .addr code { white-space: nowrap; }
+  .copy { font: inherit; font-size: 0.8rem; padding: 2px 10px; min-height: 30px; border: 1px solid #0f5f5a; border-radius: 6px; background: none; color: #0f5f5a; cursor: pointer; }
+  .flow { display: grid; grid-template-columns: 1fr auto 1fr auto 1fr; gap: 8px; align-items: center; margin: 20px 0 8px; text-align: center; }
+  .node { border: 1px solid #d8d8d8; border-radius: 10px; padding: 10px 8px; font-weight: 600; font-size: 0.95rem; }
+  .node small { display: block; font-weight: 400; color: #5c5c5c; font-size: 0.8rem; }
+  .node.neutra { border-color: #0f5f5a; background: #e3f0ee; color: #0f5f5a; }
+  .node.invite { grid-column: 3; }
+  .arrow { color: #0f5f5a; font-size: 1.3rem; }
+  .down { grid-column: 3; }
+  .codebox { display: flex; flex-wrap: wrap; gap: 8px; } .codebox input { flex: 1 1 220px; min-height: 40px; font: inherit; padding: 0 8px; border: 1px solid #bbb; border-radius: 8px; }
+  .codebox button { min-height: 40px; padding: 0 14px; border: none; border-radius: 8px; background: #0f5f5a; color: #fff; font: inherit; font-weight: 600; cursor: pointer; }
+  .error { color: #b42318; font-weight: 600; }
+  .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+  @media (max-width: 560px) { .flow { grid-template-columns: 1fr; } .node.invite, .down { grid-column: 1; } .arrow { transform: rotate(90deg); } .arrow.down { transform: none; } }
+  @media (prefers-color-scheme: dark) { body { color: #e8e8e8; background: #141414; } a { color: #7aa7ff; } .box { background: #1f1f1f; border-color: #3a3a3a; }
+    .node { border-color: #3a3a3a; } .node small { color: #a8a8a8; } .node.neutra { background: #1b3431; color: #6cc4bb; border-color: #6cc4bb; } .arrow { color: #6cc4bb; }
+    .copy { color: #6cc4bb; border-color: #6cc4bb; } .codebox input { background: #1f1f1f; color: #e8e8e8; border-color: #555; } .error { color: #f97066; } }
 </style>
 </head>
 <body>
 ${body}
+${body.includes('class="copy"') ? COPY_SCRIPT : ""}
 </body>
 </html>`;
 	return new Response(html, { headers: { "Content-Type": "text/html; charset=utf-8" } });
 }
 
 export function homePage(connectorUrl: string): Response {
+	const home = connectorUrl.replace(/\/mcp$/, "");
 	return page(
 		"Neutra · Find a time without sharing your calendar",
 		`<h1>Neutra</h1>
 <p><strong>Find a time to meet, without sharing your calendar.</strong> Your AI assistant and theirs work it out, and you both get one calendar invite. Neither of you sees the other's free times.</p>
+
+<div class="flow" role="img" aria-label="Anna's assistant sends her free times to Neutra, Ben answers with his assistant or in the browser, and Neutra sends one invite to both.">
+<div class="node">Anna's assistant<small>sends her free times</small></div>
+<span class="arrow" aria-hidden="true">→</span>
+<div class="node neutra">Neutra<small>compares them privately</small></div>
+<span class="arrow" aria-hidden="true">←</span>
+<div class="node">Ben<small>his assistant or the browser</small></div>
+<span class="arrow down" aria-hidden="true">↓</span>
+<div class="node invite">One invite to both<small>with a Google Meet link</small></div>
+</div>
 
 <h2>How it works</h2>
 <ol class="steps">
@@ -56,18 +119,19 @@ export function homePage(connectorUrl: string): Response {
 </ul>
 
 <h2 id="add">Add Neutra to your assistant (once, about 2 minutes)</h2>
-<p>Assistants use add-ons called connectors. Neutra's address is <code>${connectorUrl}</code>; it isn't in connector directories yet, so you add it by hand:</p>
+<p>Assistants use add-ons called connectors. Neutra's address is ${address(connectorUrl)}; it isn't in connector directories yet, so you add it by hand:</p>
 <details><summary>Claude</summary><p>Customize → Connectors → Add custom connector → paste the address → Add → sign in with Google. If your phone app can't add it, add it once on claude.ai; it then works in the app too.</p></details>
 <details><summary>ChatGPT</summary><p>Needs Developer mode (Settings → Apps), which not every plan has. Then add the address as a new app and sign in.</p></details>
 <details><summary>Muse</summary><p>Tell Muse in chat: <em>"Add a custom connector: Neutra, remote streamable HTTP, ${connectorUrl}, OAuth."</em> Then sign in. Muse is available in the US, Canada, Japan and Singapore.</p></details>
 <details><summary>Other assistants</summary><p>Any assistant that supports remote MCP connectors with sign-in.</p></details>
 
 <p>Contact: <a href="mailto:${CONTACT}">${CONTACT}</a></p>`,
+		home,
 	);
 }
 
 /** The page behind the link in a hand-off message: what this is and how to answer. */
-export function requestPage(starterName: string | null, connectorUrl: string): Response {
+export function requestPage(starterName: string | null, connectorUrl: string, decisionId: string, badCode = false): Response {
 	const who = starterName ? starterName.split(/\s+/)[0] : "Someone";
 	return page(
 		"Neutra · Answer a request",
@@ -75,7 +139,7 @@ export function requestPage(starterName: string | null, connectorUrl: string): R
 <p>Neutra finds a time that works for both of you, <strong>without either of you sharing your calendar</strong>. When it finds one, you both get a calendar invite. No AI on Neutra's side sees your times.</p>
 
 <h2>1. Add Neutra to your assistant (once, about 2 minutes)</h2>
-<p>Assistants use add-ons called connectors. Neutra's address is <code>${connectorUrl}</code>; it isn't in connector directories yet, so you add it by hand:</p>
+<p>Assistants use add-ons called connectors. Neutra's address is ${address(connectorUrl)}; it isn't in connector directories yet, so you add it by hand:</p>
 <details><summary>Claude</summary><p>Customize → Connectors → Add custom connector → paste the address → Add → sign in with Google. If your phone app can't add it, add it once on claude.ai; it then works in the app too.</p></details>
 <details><summary>ChatGPT</summary><p>Needs Developer mode (Settings → Apps), which not every plan has. Then add the address as a new app and sign in.</p></details>
 <details><summary>Muse</summary><p>Tell Muse in chat: <em>"Add a custom connector: Neutra, remote streamable HTTP, ${connectorUrl}, OAuth."</em> Then sign in. Muse is available in the US, Canada, Japan and Singapore.</p></details>
@@ -84,9 +148,17 @@ export function requestPage(starterName: string | null, connectorUrl: string): R
 
 <h2>2. Paste the line from the message</h2>
 <p>Paste the line in quotes from the message into your assistant, and add when you're free. That's it. If no time fits, nobody learns anything about the other's times, and you can try again with more times.</p>
-<p><strong>No AI assistant?</strong> Open the browser link at the end of the message instead: sign in with Google and add the times you're free.</p>
+<h2 id="browser">No AI assistant?</h2>
+<p>Open the browser link at the end of the message: sign in with Google and add the times you're free. Or paste the code from the message here:</p>
+${badCode ? `<p class="error" role="alert">That code doesn't look complete. Copy the part that starts with "neutra:" from the message.</p>` : ""}
+<form class="codebox" method="get" action="/r/${decisionId}/answer">
+<label for="code" class="sr">Code from the message</label>
+<input id="code" name="code" placeholder="neutra:…" autocomplete="off" autocapitalize="off" spellcheck="false" required>
+<button type="submit">Answer in the browser</button>
+</form>
 
 <p><a href="/">What is Neutra?</a> · <a href="/privacy">Privacy</a></p>`,
+		connectorUrl.replace(/\/mcp$/, ""),
 	);
 }
 

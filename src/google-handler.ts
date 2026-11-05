@@ -1,6 +1,8 @@
 import type { AuthRequest, OAuthHelpers } from "@cloudflare/workers-oauth-provider";
 import { Hono } from "hono";
+import { splitCombinedCode } from "./decisions";
 import { recordEvent } from "./events";
+import { ogImage } from "./og-image";
 import { homePage, privacyPage, requestPage } from "./pages";
 import { fetchUpstreamAuthToken, getUpstreamAuthorizeUrl, isAllowed, type Props } from "./utils";
 import { WebAnswer, webCallback } from "./web-answer";
@@ -20,6 +22,7 @@ const app = new Hono<{ Bindings: Env & { OAUTH_PROVIDER: OAuthHelpers } }>();
 
 app.get("/", (c) => homePage(c.env.MCP_RESOURCE));
 app.get("/privacy", () => privacyPage());
+app.get("/og.png", () => ogImage());
 // Answering in the browser, for people without an AI assistant.
 app.route("/", WebAnswer);
 
@@ -35,7 +38,26 @@ app.get("/r/:id", async (c) => {
 	if (row && !/bot|crawl|spider|preview|facebookexternalhit|whatsapp|slack|telegram|twitter|discord|linkedin|skype/i.test(agent)) {
 		c.executionCtx.waitUntil(recordEvent(c.env, { type: "handoff_opened", decisionRef: row.stats_ref }));
 	}
-	return requestPage(row?.starter_name ?? null, c.env.MCP_RESOURCE);
+	return requestPage(row?.starter_name ?? null, c.env.MCP_RESOURCE, /^[a-z][a-z2-7]{25}$/.test(id) ? id : "", c.req.query("bad") === "1");
+});
+
+// The code box on the steps page: someone who opened the wrong link pastes the code and goes to the answer page.
+app.get("/r/:id/answer", (c) => {
+	const id = c.req.param("id");
+	const pasted = (c.req.query("code") ?? "").trim();
+	let target: string | null = null;
+	try {
+		const combined = splitCombinedCode(pasted.match(/neutra:\S+/i)?.[0] ?? pasted);
+		if (combined) target = `${combined.id}.${combined.code}`;
+	} catch {
+		// An incomplete "neutra:" code: say so below.
+	}
+	// Just the 12 characters after the dot also work, with the request from the address.
+	if (!target && /^[a-z][a-z2-7]{25}$/.test(id) && /^[a-z][a-z2-7]{11}$/i.test(pasted)) target = `${id}.${pasted.toLowerCase()}`;
+	const headers = { "Cache-Control": "no-store", "Referrer-Policy": "same-origin" };
+	return target
+		? new Response(null, { status: 303, headers: { ...headers, Location: `/a/${target}` } })
+		: new Response(null, { status: 303, headers: { ...headers, Location: `/r/${id}?bad=1#browser` } });
 });
 
 app.get("/authorize", async (c) => {

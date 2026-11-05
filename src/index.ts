@@ -86,7 +86,7 @@ function createServer() {
 		{
 			title: "Start finding a meeting time",
 			description:
-				"Start finding a meeting time with someone. Send your person's free times and the meeting length; returns a message to forward.",
+				"Find a meeting time with someone whose calendar you can't see, without sharing your person's. Send their free times and the meeting length; returns a message for them to forward.",
 			inputSchema: z.object({
 				decision: z.object({
 					meeting: z.object({ duration: z.string().describe('Seconds, e.g. "3600s"') }),
@@ -111,7 +111,7 @@ function createServer() {
 		{
 			title: "Answer a meeting-time request",
 			description:
-				"Answer a Neutra request with your person's free times. Neutra compares them privately. If a time fits both, it sends one calendar invite; otherwise, nobody learns anything about the other's times.",
+				"Use when your person pastes a Neutra message or a \"neutra:\" code. Pass the code and ask only for their free times. Neutra compares them privately. If a time fits both, it sends one calendar invite; otherwise, nobody learns anything about the other's times.",
 			inputSchema: z.object({
 				parent: DecisionName.optional().describe("Not needed when code is the combined form"),
 				code: z.string().describe('The code from the forwarded message, usually the combined form "neutra:<id>.<code>"'),

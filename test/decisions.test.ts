@@ -152,6 +152,18 @@ describe("create_answer", () => {
 		expect(own.meeting.availableWindows).toEqual([]);
 	});
 
+	it("refuses a too narrow answer with a reason and what to ask, without using a try", async () => {
+		const decision = await start();
+		const narrow = [window("2026-11-04T18:00:00Z", "2026-11-04T19:00:00Z")];
+		const error = await createAnswer(env, ben, { parent: decision.name, code: decision.code!, windows: narrow }).catch((e) => e);
+		expect(error).toMatchObject({ code: "INVALID_ARGUMENT", reason: "TOO_NARROW" });
+		expect(error.message).toContain("at least 2 hours (twice the meeting length)");
+		expect(error.message).toContain("Ask your person for more times");
+		expect(error.message).toContain("This answer was not counted as a try.");
+		const next = await createAnswer(env, ben, { parent: decision.name, code: decision.code!, windows: benBusyThen });
+		expect(next.decision.remainingAttempts).toBe(2);
+	});
+
 	it("after no match, the same person may retry twice; then it ends as NO_MATCH", async () => {
 		const decision = await start();
 		const answer = () => createAnswer(env, ben, { parent: decision.name, code: decision.code!, windows: benBusyThen });

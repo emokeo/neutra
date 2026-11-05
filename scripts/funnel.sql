@@ -11,4 +11,6 @@ SELECT 'distinct responders' AS step, COUNT(DISTINCT person) AS n FROM events WH
 SELECT 'failed requests' AS step, COUNT(*) AS n FROM events WHERE type = 'request_failed' AND RECENT;
 SELECT 'requests by ' || COALESCE(client, 'unknown') AS step, COUNT(*) AS n FROM events WHERE type IN ('decision_created', 'answer_submitted') AND RECENT GROUP BY client;
 SELECT 'outside starters (without you and testers)' AS step, COUNT(DISTINCT person) AS n FROM events WHERE type = 'decision_created' AND person NOT IN (TEAM_IDS) AND RECENT;
-SELECT 'outside requests, all time (goal: 1,000)' AS step, COUNT(*) AS n FROM events WHERE type IN ('decision_created', 'answer_submitted') AND person NOT IN (TEAM_IDS);
+SELECT 'answered in the browser (no assistant)' AS step, COUNT(DISTINCT decision_ref) AS n FROM events WHERE type = 'answer_submitted' AND client = 'web' AND RECENT;
+-- The goal counts requests from assistants, so answers on the web page don't count toward it.
+SELECT 'outside requests from assistants, all time (goal: 1,000)' AS step, COUNT(*) AS n FROM events WHERE type IN ('decision_created', 'answer_submitted') AND client != 'web' AND person NOT IN (TEAM_IDS);

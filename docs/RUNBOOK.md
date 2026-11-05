@@ -32,7 +32,7 @@ When the health check says the key is refused or missing a permission:
 
 ## Numbers
 The anonymous usage events identify people by a scrambled ID derived from `COOKIE_ENCRYPTION_KEY`. Replacing that key makes returning people count as new in the stats.
-- Actions → *Stats* → Run workflow: the 14-day funnel (started, answered, matched, accepted, distinct people, requests per assistant).
+- Actions → *Stats* → Run workflow: the 14-day funnel (started, answered, matched, accepted, distinct people, requests per assistant). "web" means answered on the browser page; those don't count toward the 1,000 goal.
 - Feature requests: Cloudflare dashboard → D1 → neutra → Console: `SELECT * FROM feature_requests ORDER BY create_time DESC`.
 
 ## If the Gmail account is suspended

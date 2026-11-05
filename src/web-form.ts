@@ -7,7 +7,7 @@ export const MAX_ROWS = 20;
 const DAY = /^\d{4}-\d{2}-\d{2}$/;
 const TIME = /^([01]\d|2[0-3]):[0-5]\d(:[0-5]\d(\.\d+)?)?$/;
 
-function text(value: FormDataEntryValue | undefined): string {
+function text(value: unknown): string {
 	return typeof value === "string" ? value.trim() : "";
 }
 

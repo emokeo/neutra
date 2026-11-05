@@ -3,6 +3,7 @@
 // Sign-in uses Google (same client and /callback as the connector; states starting with "web." are ours).
 import { Hono } from "hono";
 import { ApiError, createAnswer, MAX_ANSWERS, webRequest, type WebRequest } from "./decisions";
+import { recordEvent } from "./events";
 import { formatDay, isValidTimeZone } from "./time";
 import { fetchUpstreamAuthToken, getUpstreamAuthorizeUrl, isAllowed } from "./utils";
 import { durationText, isoDay, readRows, rowsToWindows, type Row } from "./web-form";
@@ -180,6 +181,12 @@ WebAnswer.post("/a/:token", async (c) => {
 				500,
 			);
 		}
+		await recordEvent(c.env, {
+			type: "request_failed",
+			client: "web",
+			email: signedIn.email,
+			detail: error.reason ? { tool: "create_answer", code: error.code, reason: error.reason } : { tool: "create_answer", code: error.code },
+		});
 		if (error.reason === "TOO_NARROW") {
 			return again(
 				`Add more times: together at least ${durationText(2 * info.durationSeconds)}, each at least ${durationText(info.durationSeconds)} long and starting an hour from now or later.`,

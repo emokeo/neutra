@@ -3,6 +3,7 @@ import { createEvent, deleteEvent, eventExists, getReplies, newEventId, type Inv
 import { recordEvent } from "./events";
 import { checkCreateAnswer, checkCreateDecision } from "./limits";
 import { formatDay, formatRange, isValidTimeZone, parseTimestamp } from "./time";
+import { durationText } from "./web-form";
 
 export type Caller = { email: string; name: string; client?: string };
 export type Interval = { startTime: string; endTime: string };
@@ -176,7 +177,7 @@ function coverage(windows: { start: number; end: number }[]): number {
 // Narrow answers would let repeated tries map the other person's free times.
 // Only time where a meeting could actually happen counts: from an hour from now to the 30-day limit,
 // in pieces at least as long as the meeting. Otherwise past or tiny windows would pad the total.
-function requireBreadth(windows: { start: number; end: number }[], durationSeconds: number, now: number): void {
+function requireBreadth(windows: { start: number; end: number }[], durationSeconds: number, now: number, answering = false): void {
 	const from = now + MIN_LEAD_MS;
 	const to = now + MAX_DAYS_AHEAD * 24 * 60 * 60 * 1000;
 	const usable = windows
@@ -185,7 +186,8 @@ function requireBreadth(windows: { start: number; end: number }[], durationSecon
 	if (coverage(usable) < MIN_BREADTH * durationSeconds * 1000) {
 		throw new ApiError(
 			"INVALID_ARGUMENT",
-			`The windows must cover at least ${MIN_BREADTH} times the meeting duration in total. Offer more of the times you're free.`,
+			// Says why and what to ask, so the assistant can go back to its person instead of giving up.
+			`Together the times must cover at least ${durationText(MIN_BREADTH * durationSeconds)} (twice the meeting length), counting only times from an hour from now and pieces at least as long as the meeting. This keeps anyone from mapping the other person's calendar with narrow guesses. Ask your person for more times, for example other days or next week.${answering ? " This answer was not counted as a try." : ""}`,
 			"TOO_NARROW",
 		);
 	}
@@ -496,7 +498,7 @@ export async function createAnswer(
 		throw new ApiError("FAILED_PRECONDITION", `This request has ended (${row.state}). Ask the person who sent it to start a new one.`);
 	}
 	const windows = parseWindows(request.windows, now, request.timeZone);
-	requireBreadth(windows, row.duration_seconds, now);
+	requireBreadth(windows, row.duration_seconds, now, true);
 	await checkCreateAnswer(env, caller.email, row.starter_email, id, now);
 	const starter = (await answersOf(env, id)).find((a) => a.role === "STARTER");
 	if (!starter) throw new ApiError("FAILED_PRECONDITION", "The decision has no starter answer.");

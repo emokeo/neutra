@@ -119,7 +119,7 @@ describe("signed cookies", () => {
 });
 
 describe("web answer page", () => {
-	it("shows the request and a sign-in button, without caching or a referrer", async () => {
+	it("shows the request and a sign-in button, without caching or a referrer to other sites", async () => {
 		const token = await start();
 		const res = await get(`/a/${token}`);
 		expect(res.status).toBe(200);
@@ -127,7 +127,7 @@ describe("web answer page", () => {
 		expect(html).toContain("Anna would like to meet you");
 		expect(html).toContain("1 hour · answer by Tue 17 Nov");
 		expect(html).toContain(`href="/a/${token}/signin"`);
-		expect(res.headers.get("referrer-policy")).toBe("no-referrer");
+		expect(res.headers.get("referrer-policy")).toBe("same-origin");
 		expect(res.headers.get("cache-control")).toBe("no-store");
 	});
 
@@ -199,6 +199,8 @@ describe("web answer page", () => {
 		const cookie = await as(ben);
 		const res = await post(`/a/${token}`, cookie, [...row("2026-11-04", "18:00", "21:00"), ["tz", "UTC"]], "https://evil.example");
 		expect(res.status).toBe(403);
+		// What browsers send for a form on a page with "no-referrer", or from a sandboxed frame.
+		expect((await post(`/a/${token}`, cookie, [...row("2026-11-04", "18:00", "21:00"), ["tz", "UTC"]], "null")).status).toBe(403);
 		expect(google.events.size).toBe(0);
 		expect(await (await get(`/a/${token}`, cookie)).text()).not.toContain("No time fits yet");
 	});

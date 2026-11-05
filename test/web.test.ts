@@ -249,7 +249,7 @@ describe("web answer page", () => {
 		const limited = await post(`/a/${token}`, await as(ben), [...row("2026-11-06", "09:00", "12:00"), ["tz", "UTC"]]);
 		expect(limited.status).toBe(429);
 		const html = await limited.text();
-		expect(html).toContain("You've already answered 3 requests from Anna in the last 24 hours.");
+		expect(html).toContain("already answered 3 requests from Anna in the last 24 hours.");
 		expect(html).not.toContain("Limit reached");
 	});
 

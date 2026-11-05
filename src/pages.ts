@@ -13,7 +13,10 @@ function page(title: string, body: string): Response {
   body { font: 16px/1.6 system-ui, sans-serif; max-width: 640px; margin: 48px auto; padding: 0 16px; color: #1a1a1a; background: #fff; }
   h1 { font-size: 1.6rem; } h2 { font-size: 1.1rem; margin-top: 2rem; }
   a { color: #1a56db; }
-  @media (prefers-color-scheme: dark) { body { color: #e8e8e8; background: #141414; } a { color: #7aa7ff; } }
+  .box { border: 1px solid #d8d8d8; border-radius: 10px; padding: 10px 14px; margin: 8px 0 4px; background: #f7f7f5; font-size: 0.92rem; }
+  ol.steps > li { margin-bottom: 1rem; }
+  details { margin: 6px 0; } summary { cursor: pointer; font-weight: 600; }
+  @media (prefers-color-scheme: dark) { body { color: #e8e8e8; background: #141414; } a { color: #7aa7ff; } .box { background: #1f1f1f; border-color: #3a3a3a; } }
 </style>
 </head>
 <body>
@@ -25,33 +28,41 @@ ${body}
 
 export function homePage(connectorUrl: string): Response {
 	return page(
-		"Neutra",
+		"Neutra · Find a time without sharing your calendar",
 		`<h1>Neutra</h1>
-<p><strong>Find a time to meet, without sharing your calendar.</strong> Your AI assistant tells Neutra when you're free, the other person's assistant does the same, and Neutra sends one calendar invite to both. Neither of you ever sees the other's times.</p>
-<p>No AI on Neutra's side: Neutra is plain code that compares times. It can't see your calendar, contacts or mail: Google sign-in gives it only your name and email. Neutra is new and free, made by Emoke Olti in Switzerland. <a href="https://github.com/emokeo/neutra">Source code</a>.</p>
+<p><strong>Find a time to meet, without sharing your calendar.</strong> Your AI assistant and theirs work it out, and you both get one calendar invite. Neither of you sees the other's free times.</p>
 
-<h2>Got a Neutra message?</h2>
-<p>Add Neutra to your assistant once (below), then paste the line from the message and add when you're free.</p>
+<h2>How it works</h2>
+<ol class="steps">
+<li><strong>You ask your assistant.</strong> <em>"Find an hour with Ben next week. I'm free Tuesday and Thursday evening."</em> It gives you a short message to send Ben, by WhatsApp or anywhere:
+<div class="box">Anna wants to find a time to meet you with Neutra. Neither of you shares your calendar … Tell your assistant: "Answer Neutra request neutra:… I'm free: …"</div></li>
+<li><strong>Ben's assistant answers</strong> with when he's free. Neutra compares the two privately.</li>
+<li><strong>You both get one invite:</strong>
+<div class="box"><strong>Anna &amp; Ben</strong> · Thu 12 Nov, 19:00–20:00<br>Arranged by Neutra: found without either of you sharing your calendar.</div></li>
+</ol>
 
-<h2>Add Neutra to your assistant</h2>
-<p>Connector address: <code>${connectorUrl}</code>. Neutra isn't in connector directories yet, so you add it as a custom connector.</p>
-<ul>
-<li><strong>Claude:</strong> Customize → Connectors → Add custom connector → paste the address → Add → sign in with Google. In a chat, Neutra can be switched on under <em>+</em> → Connectors. If your phone app can't add connectors, add it once on claude.ai; it then works in the app too.</li>
-<li><strong>ChatGPT:</strong> custom connectors need Developer mode (Settings → Apps), which not every plan has. Then add the address as a new app and sign in.</li>
-<li><strong>Muse:</strong> tell Muse in chat: <em>"Add a custom connector: Neutra, remote streamable HTTP, ${connectorUrl}, OAuth."</em> Then sign in. (Muse is available in the US, Canada, Japan and Singapore.)</li>
-<li><strong>Other assistants:</strong> any assistant that supports remote MCP connectors with sign-in.</li>
-</ul>
+<h2>What if no time fits?</h2>
+<p>Nobody learns anything about the other's times. Ben can try again with more times, up to three tries, and each answer must cover at least twice the meeting length, so tries can't be used to map your calendar slot by slot. If nothing fits, you get an email.</p>
 
-<h2>Start one yourself</h2>
+<h2>Is it private?</h2>
+<p>Neutra is plain code that compares times: no AI on Neutra's side sees them. Free times are deleted as soon as a time is found, at the latest after 14 days. Google sign-in gives Neutra only your name and email; it can't see your calendar, contacts or mail. Free, made by Emoke Olti in Switzerland. <a href="https://github.com/emokeo/neutra">Source code</a> · <a href="/privacy">Privacy</a>.</p>
+
+<h2>Try it</h2>
 <p>Ask your assistant, for example:</p>
 <ul>
 <li><em>"Use Neutra to find an hour with Ben next week. I'm free Tuesday and Thursday, 18:00–21:00."</em></li>
 <li><em>"Find 30 minutes with my landlord before Friday with Neutra, without showing him my calendar."</em></li>
 <li><em>"Answer this Neutra request: neutra:… I'm free tomorrow afternoon and Monday morning."</em></li>
 </ul>
-<p>Starting one gives you a message to forward. If a time fits both of you, you both get a calendar invite; ask your assistant for the status any time.</p>
 
-<p><a href="/privacy">Privacy</a> · Contact: <a href="mailto:${CONTACT}">${CONTACT}</a></p>`,
+<h2>Add Neutra to your assistant (once, about 2 minutes)</h2>
+<p>Assistants use add-ons called connectors. Neutra's address is <code>${connectorUrl}</code>; it isn't in connector directories yet, so you add it by hand:</p>
+<details><summary>Claude</summary><p>Customize → Connectors → Add custom connector → paste the address → Add → sign in with Google. If your phone app can't add it, add it once on claude.ai; it then works in the app too.</p></details>
+<details><summary>ChatGPT</summary><p>Needs Developer mode (Settings → Apps), which not every plan has. Then add the address as a new app and sign in.</p></details>
+<details><summary>Muse</summary><p>Tell Muse in chat: <em>"Add a custom connector: Neutra, remote streamable HTTP, ${connectorUrl}, OAuth."</em> Then sign in. Muse is available in the US, Canada, Japan and Singapore.</p></details>
+<details><summary>Other assistants</summary><p>Any assistant that supports remote MCP connectors with sign-in.</p></details>
+
+<p>Contact: <a href="mailto:${CONTACT}">${CONTACT}</a></p>`,
 	);
 }
 
@@ -64,17 +75,15 @@ export function requestPage(starterName: string | null, connectorUrl: string): R
 <p>Neutra finds a time that works for both of you, <strong>without either of you sharing your calendar</strong>. When it finds one, you both get a calendar invite. No AI on Neutra's side sees your times.</p>
 
 <h2>1. Add Neutra to your assistant (once, about 2 minutes)</h2>
-<p>Connector address: <code>${connectorUrl}</code>. Neutra isn't in connector directories yet, so you add it as a custom connector.</p>
-<ul>
-<li><strong>Claude:</strong> Customize → Connectors → Add custom connector → paste the address → Add → sign in with Google. In a chat, Neutra can be switched on under <em>+</em> → Connectors. If your phone app can't add connectors, add it once on claude.ai; it then works in the app too.</li>
-<li><strong>ChatGPT:</strong> custom connectors need Developer mode (Settings → Apps), which not every plan has. Then add the address as a new app and sign in.</li>
-<li><strong>Muse:</strong> tell Muse in chat: <em>"Add a custom connector: Neutra, remote streamable HTTP, ${connectorUrl}, OAuth."</em> Then sign in. (Muse is available in the US, Canada, Japan and Singapore.)</li>
-<li><strong>Other assistants:</strong> any assistant that supports remote MCP connectors with sign-in.</li>
-</ul>
+<p>Assistants use add-ons called connectors. Neutra's address is <code>${connectorUrl}</code>; it isn't in connector directories yet, so you add it by hand:</p>
+<details><summary>Claude</summary><p>Customize → Connectors → Add custom connector → paste the address → Add → sign in with Google. If your phone app can't add it, add it once on claude.ai; it then works in the app too.</p></details>
+<details><summary>ChatGPT</summary><p>Needs Developer mode (Settings → Apps), which not every plan has. Then add the address as a new app and sign in.</p></details>
+<details><summary>Muse</summary><p>Tell Muse in chat: <em>"Add a custom connector: Neutra, remote streamable HTTP, ${connectorUrl}, OAuth."</em> Then sign in. Muse is available in the US, Canada, Japan and Singapore.</p></details>
+<details><summary>Other assistants</summary><p>Any assistant that supports remote MCP connectors with sign-in.</p></details>
 <p>Neutra only uses your name and email from Google sign-in, to send you the invite.</p>
 
 <h2>2. Paste the line from the message</h2>
-<p>Paste the line in quotes from the message into your assistant, and add when you're free. That's it.</p>
+<p>Paste the line in quotes from the message into your assistant, and add when you're free. That's it. If no time fits, nobody learns anything about the other's times, and you can try again with more times.</p>
 
 <p><a href="/">What is Neutra?</a> · <a href="/privacy">Privacy</a></p>`,
 	);

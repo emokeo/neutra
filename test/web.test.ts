@@ -156,6 +156,9 @@ describe("web answer page", () => {
 		const form = await (await get(`/a/${token}`, cookie)).text();
 		expect(form).toContain('name="day"');
 		expect(form).toContain("Signed in as ben@example.com");
+		// The page checks "enough times" as you type, with the meeting length it needs.
+		expect(form).toContain('data-meeting="60"');
+		expect(form).toContain('id="enough"');
 
 		const res = await post(`/a/${token}`, cookie, [...row("2026-11-04", "18:00", "21:00"), ["tz", "UTC"]]);
 		expect(res.status).toBe(303);

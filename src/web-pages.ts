@@ -9,7 +9,7 @@ export function esc(value: string): string {
 const STYLE = `
 body { font: 16px/1.5 system-ui, sans-serif; max-width: 480px; margin: 32px auto; padding: 0 16px; color: #1a1a1a; background: #fff; }
 a { color: #0f5f5a; } h1 { font-size: 1.5rem; line-height: 1.2; } .muted { color: #5c5c5c; font-size: 0.9rem; }
-.error { color: #b42318; font-weight: 600; }
+.error { color: #b42318; font-weight: 600; } .hint { color: #5c5c5c; font-size: 0.9rem; }
 .row { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; padding-bottom: 12px; margin-bottom: 12px; border-bottom: 1px solid #e4e4e0; }
 .row .day { grid-column: 1 / -1; }
 .row label { display: flex; flex-direction: column; font-size: 12px; color: #5c5c5c; }
@@ -81,7 +81,8 @@ function rowHtml(row: Row, min: string, max: string): string {
 </div>`;
 }
 
-// Fills in the browser's time zone, adds rows, and stops a double click from sending two tries.
+// Fills in the browser's time zone, adds rows, shows whether the times are enough before sending,
+// and stops a double click from sending two tries.
 const SCRIPT = `(() => {
   const form = document.getElementById("answer");
   const zone = form.elements.namedItem("tz");
@@ -95,7 +96,44 @@ const SCRIPT = `(() => {
     row.querySelectorAll("input").forEach((input) => { input.value = ""; });
     rows.append(row);
   });
-  form.addEventListener("submit", () => {
+  // The same rule as Neutra's: times shorter than the meeting don't count, and overlapping
+  // or repeated times count once. Past times still count here, so the server stays the stricter check.
+  const meeting = Number(form.dataset.meeting);
+  const status = document.getElementById("enough");
+  const text = (m) => { const h = Math.floor(m / 60), r = m % 60; return [h ? h + (h === 1 ? " hour" : " hours") : "", r ? r + " min" : ""].filter(Boolean).join(" ") || "0 min"; };
+  const covered = () => {
+    const spans = [];
+    for (const row of rows.children) {
+      const [day, from, to] = row.querySelectorAll("input");
+      if (!day.value || !from.value || !to.value) continue;
+      const start = Date.parse(day.value + "T" + from.value.slice(0, 5) + "Z");
+      let end = Date.parse(day.value + "T" + to.value.slice(0, 5) + "Z");
+      if (to.value.slice(0, 5) === "00:00") end += 24 * 60 * 60 * 1000;
+      if (end - start >= meeting * 60 * 1000) spans.push([start, end]);
+    }
+    spans.sort((a, b) => a[0] - b[0]);
+    let total = 0, reach = -Infinity;
+    for (const [start, end] of spans) {
+      if (end <= reach) continue;
+      total += end - Math.max(start, reach);
+      reach = end;
+    }
+    return total / 60000;
+  };
+  const update = () => {
+    const total = covered();
+    const ok = total >= 2 * meeting;
+    status.textContent = ok
+      ? "Added: " + text(total) + ". Enough to send."
+      : "Added so far: " + text(total) + ". Add at least " + text(2 * meeting) + " in total, each time at least " + text(meeting) + " long. Times that overlap count once.";
+    status.className = ok ? "muted" : "hint";
+    return ok;
+  };
+  rows.addEventListener("input", update);
+  add.addEventListener("click", update);
+  update();
+  form.addEventListener("submit", (event) => {
+    if (!update()) { event.preventDefault(); status.className = "error"; status.focus(); return; }
     const send = form.querySelector("[type=submit]");
     setTimeout(() => { send.disabled = true; send.textContent = "Sending…"; }, 0);
   });
@@ -112,6 +150,7 @@ export function formPage(
 		minDay: string;
 		maxDay: string;
 		minimum: string;
+		meetingMinutes: number;
 		notice?: string;
 		error?: string;
 		status?: number;
@@ -125,13 +164,14 @@ export function formPage(
 		`${heading(r)}
 ${p.notice ? `<p><strong>${esc(p.notice)}</strong></p>` : ""}
 ${p.error ? `<p class="error" role="alert">${esc(p.error)}</p>` : ""}
-<form id="answer" method="post" action="/a/${p.token}">
+<form id="answer" method="post" action="/a/${p.token}" data-meeting="${Math.round(p.meetingMinutes)}">
 <p>When are you free? Add each time that works, at least ${esc(p.minimum)} in total. ${esc(r.starterFirstName)} won't see your times.</p>
 <div id="rows">
 ${rows.map((row) => rowHtml(row, p.minDay, p.maxDay)).join("\n")}
 </div>
 <button type="button" id="add" hidden>+ Add another time</button>
 <input type="hidden" name="tz" value="${esc(p.timeZone ?? "")}">
+<p id="enough" class="muted" tabindex="-1" aria-live="polite"></p>
 <button type="submit" class="button">Send</button>
 <p class="muted">Signed in as ${esc(p.email)}. The invite goes to this address. <a href="/a/${p.token}/signin">Use another Google account</a></p>
 </form>`,

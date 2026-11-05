@@ -123,6 +123,7 @@ function renderForm(
 		// 29, not 30: Neutra refuses times starting more than 30 days from now, and the last day's evening would be past that.
 		maxDay: isoDay(now + 29 * 24 * 60 * 60 * 1000, zone),
 		minimum: durationText(2 * info.durationSeconds),
+		meetingMinutes: info.durationSeconds / 60,
 		notice: extra.notice,
 		error: extra.error,
 		status: extra.status,

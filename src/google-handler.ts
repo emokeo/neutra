@@ -3,6 +3,7 @@ import { Hono } from "hono";
 import { recordEvent } from "./events";
 import { homePage, privacyPage, requestPage } from "./pages";
 import { fetchUpstreamAuthToken, getUpstreamAuthorizeUrl, isAllowed, type Props } from "./utils";
+import { WebAnswer, webCallback } from "./web-answer";
 import {
 	addApprovedClient,
 	bindStateToSession,
@@ -19,6 +20,8 @@ const app = new Hono<{ Bindings: Env & { OAUTH_PROVIDER: OAuthHelpers } }>();
 
 app.get("/", (c) => homePage(c.env.MCP_RESOURCE));
 app.get("/privacy", () => privacyPage());
+// Answering in the browser, for people without an AI assistant.
+app.route("/", WebAnswer);
 
 // The link in a hand-off message. Counts "message opened" (link previews and bots excluded).
 app.get("/r/:id", async (c) => {
@@ -158,6 +161,9 @@ async function redirectToGoogle(
  * into a victim's OAuth flow.
  */
 app.get("/callback", async (c) => {
+	// Sign-in for the web answer page shares this redirect address.
+	if (c.req.query("state")?.startsWith("web.")) return webCallback(c.req.raw, c.env);
+
 	// Validate OAuth state with session binding
 	// This checks both KV storage AND the session cookie
 	let oauthReqInfo: AuthRequest;

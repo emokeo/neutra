@@ -110,6 +110,9 @@ describe("create_decision", () => {
 		expect(message).toContain("Neutra gets only your name and email");
 		expect(message).toContain(`https://neutra.example.dev/r/${id}`);
 		expect(message).toContain(`Tell your assistant: "Answer Neutra request neutra:${id}.${decision.code}. I'm free: …"`);
+		// The assistant comes first; the browser page is the fallback.
+		expect(message).toContain(`No AI assistant? Answer in your browser instead: https://neutra.example.dev/a/${id}.${decision.code}`);
+		expect(message.indexOf("Tell your assistant")).toBeLessThan(message.indexOf("No AI assistant?"));
 		// The fixed 14-day deadline (no longer tied to the starter's times).
 		expect(message).toContain("Open until Tue 17 Nov.");
 	});

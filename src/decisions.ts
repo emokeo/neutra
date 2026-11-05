@@ -14,11 +14,16 @@ type StoredState = State | "MATCHING";
 /** An error with a google.rpc canonical code, as in the API's error table. */
 export type ErrorCode = "NOT_FOUND" | "PERMISSION_DENIED" | "FAILED_PRECONDITION" | "INVALID_ARGUMENT" | "RESOURCE_EXHAUSTED";
 
+/** Why an answer was refused, for callers that word the error themselves (the web page). */
+export type ErrorReason = "TOO_NARROW" | "OUT_OF_RANGE" | "UNCONFIRMED";
+
 export class ApiError extends Error {
 	readonly code: ErrorCode;
-	constructor(code: ErrorCode, message: string) {
+	readonly reason?: ErrorReason;
+	constructor(code: ErrorCode, message: string, reason?: ErrorReason) {
 		super(message);
 		this.code = code;
+		this.reason = reason;
 	}
 }
 
@@ -108,7 +113,7 @@ function parseWindows(windows: Interval[], now: number, timeZone?: string): { st
 			throw new ApiError("INVALID_ARGUMENT", "Each window needs a startTime before its endTime.");
 		}
 		if (end <= now || start > limit) {
-			throw new ApiError("INVALID_ARGUMENT", `Windows must lie between now and ${MAX_DAYS_AHEAD} days ahead.`);
+			throw new ApiError("INVALID_ARGUMENT", `Windows must lie between now and ${MAX_DAYS_AHEAD} days ahead.`, "OUT_OF_RANGE");
 		}
 		return { start, end };
 	});
@@ -150,6 +155,8 @@ To answer (one-time setup, about 2 minutes):
 You sign in with Google; Neutra gets only your name and email. Steps for Claude, ChatGPT and others: ${home}/r/${p.decisionId}
 2. Tell your assistant: "Answer Neutra request ${combinedCode(p.decisionId, p.code)}. I'm free: …"
 
+No AI assistant? Answer in your browser instead: ${home}/a/${p.decisionId}.${p.code}
+
 Open until ${p.expires}.`;
 }
 
@@ -179,6 +186,7 @@ function requireBreadth(windows: { start: number; end: number }[], durationSecon
 		throw new ApiError(
 			"INVALID_ARGUMENT",
 			`The windows must cover at least ${MIN_BREADTH} times the meeting duration in total. Offer more of the times you're free.`,
+			"TOO_NARROW",
 		);
 	}
 }
@@ -559,6 +567,7 @@ export async function createAnswer(
 		const failed = new ApiError(
 			"FAILED_PRECONDITION",
 			"Neutra couldn't confirm the invite. Check get_decision in about 20 minutes: either the invite went out, or the request is open for another try.",
+			"UNCONFIRMED",
 		);
 
 		try {
@@ -646,5 +655,57 @@ export async function getAnswer(env: Env, caller: Caller, name: string) {
 		author: row.author_name,
 		meeting: { availableWindows: windows.map((w) => ({ startTime: iso(w.start), endTime: iso(w.end) })) },
 		createTime: row.create_time,
+	};
+}
+
+/** What the web answer page may show about a request: only what the hand-off message already says, plus the outcome for the person who answered. */
+export type WebRequest = {
+	starterFirstName: string;
+	durationSeconds: number;
+	answerBy: number;
+	state: State;
+	// Who the signed-in viewer is for this request. "open": nobody has answered yet, or nobody is signed in.
+	viewer: "starter" | "responder" | "someone_else" | "open";
+	remainingAttempts: number;
+	// The starter's times have passed, so no answer can fit any more.
+	timesPassed: boolean;
+	// The invited time, in the responder's time zone. Only for the responder.
+	scheduledTimeLocal?: string;
+};
+
+/** Looks up a request for the web answer page. Null when the request doesn't exist or the code is wrong. */
+export async function webRequest(env: Env, id: string, code: string, viewerEmail?: string): Promise<WebRequest | null> {
+	const now = Date.now();
+	const loaded = await env.DB.prepare("SELECT * FROM decisions WHERE id = ?").bind(id).first<DecisionRow>();
+	if (!loaded || (await sha256(code.trim().toLowerCase())) !== loaded.code_hash) return null;
+	// Only expiry needs refreshing here; invite replies don't change what the page shows.
+	const row = loaded.state === "WAITING" ? (await refresh(env, loaded, now)).row : loaded;
+	const viewer = !viewerEmail
+		? "open"
+		: same(viewerEmail, row.starter_email)
+			? "starter"
+			: !row.responder_email
+				? "open"
+				: same(viewerEmail, row.responder_email)
+					? "responder"
+					: "someone_else";
+	let scheduledTimeLocal: string | undefined;
+	if (viewer === "responder" && row.scheduled_start && row.scheduled_end && INVITED.includes(row.state)) {
+		const responder = (await answersOf(env, id)).find((a) => a.role === "RESPONDER");
+		scheduledTimeLocal = formatRange(
+			Date.parse(row.scheduled_start),
+			Date.parse(row.scheduled_end),
+			responder?.time_zone ?? "UTC",
+		);
+	}
+	return {
+		starterFirstName: row.starter_name.trim().split(/\s+/)[0] || "Someone",
+		durationSeconds: row.duration_seconds,
+		answerBy: Date.parse(row.expire_time),
+		state: (row.state === "MATCHING" ? "WAITING" : row.state) as State,
+		viewer,
+		remainingAttempts: Math.max(0, MAX_ANSWERS - row.attempts),
+		timesPassed: !!row.offered_until && Date.parse(row.offered_until) < now,
+		...(scheduledTimeLocal ? { scheduledTimeLocal } : {}),
 	};
 }

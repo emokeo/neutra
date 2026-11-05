@@ -15,7 +15,7 @@ type StoredState = State | "MATCHING";
 export type ErrorCode = "NOT_FOUND" | "PERMISSION_DENIED" | "FAILED_PRECONDITION" | "INVALID_ARGUMENT" | "RESOURCE_EXHAUSTED";
 
 /** Why an answer was refused, for callers that word the error themselves (the web page). */
-export type ErrorReason = "TOO_NARROW" | "OUT_OF_RANGE" | "UNCONFIRMED";
+export type ErrorReason = "TOO_NARROW" | "OUT_OF_RANGE" | "UNCONFIRMED" | "ANSWER_LIMIT" | "SAME_STARTER_LIMIT";
 
 export class ApiError extends Error {
 	readonly code: ErrorCode;
@@ -669,6 +669,8 @@ export type WebRequest = {
 	remainingAttempts: number;
 	// The starter's times have passed, so no answer can fit any more.
 	timesPassed: boolean;
+	// An answer is being processed (shown as WAITING elsewhere): the invite may be on its way.
+	pending: boolean;
 	// The invited time, in the responder's time zone. Only for the responder.
 	scheduledTimeLocal?: string;
 };
@@ -706,6 +708,7 @@ export async function webRequest(env: Env, id: string, code: string, viewerEmail
 		viewer,
 		remainingAttempts: Math.max(0, MAX_ANSWERS - row.attempts),
 		timesPassed: !!row.offered_until && Date.parse(row.offered_until) < now,
+		pending: row.state === "MATCHING",
 		...(scheduledTimeLocal ? { scheduledTimeLocal } : {}),
 	};
 }

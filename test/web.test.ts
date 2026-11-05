@@ -205,7 +205,7 @@ describe("web answer page", () => {
 		expect(await (await get(`/a/${token}`, cookie)).text()).not.toContain("No time fits yet");
 	});
 
-	it("needs a sign-in to answer", async () => {
+	it("needs a sign-in to answer, and says so when it expired", async () => {
 		const token = await start();
 		const res = await WebAnswer.request(
 			`/a/${token}`,
@@ -213,7 +213,44 @@ describe("web answer page", () => {
 			env,
 		);
 		expect(res.status).toBe(303);
+		expect(res.headers.get("location")).toBe(`http://localhost/a/${token}?expired=1`);
 		expect(google.events.size).toBe(0);
+		expect(await (await get(`/a/${token}?expired=1`)).text()).toContain("Your sign-in expired");
+	});
+
+	it("offers another Google account, and only days the server accepts", async () => {
+		const token = await start();
+		const html = await (await get(`/a/${token}`, await as(ben))).text();
+		expect(html).toContain(`href="/a/${token}/signin">Use another Google account`);
+		// Today is 3 Nov; times may start up to 30 days ahead, so the last full day to pick is 2 Dec.
+		expect(html).toContain('min="2026-11-03" max="2026-12-02"');
+	});
+
+	it("says the invite is on its way while an answer is being processed", async () => {
+		const token = await start();
+		const [id] = token.split(".");
+		await env.DB.prepare("UPDATE decisions SET state = 'MATCHING', responder_email = ?, attempts = 1 WHERE id = ?").bind(ben.email, id).run();
+		const html = await (await get(`/a/${token}`, await as(ben))).text();
+		expect(html).toContain("Almost there");
+		expect(html).not.toContain("No time fits yet");
+	});
+
+	it("words errors for people, not for assistants", async () => {
+		const token = await start();
+		const past = await post(`/a/${token}`, await as(ben), [...row("2026-11-01", "18:00", "21:00"), ["tz", "UTC"]]);
+		expect(past.status).toBe(400);
+		expect(await past.text()).toContain("One of your times has already passed or is more than 30 days ahead.");
+
+		// Ben answered three of Anna's requests today; a fourth hits the per-starter limit.
+		for (let i = 0; i < 3; i++) {
+			const other = await start();
+			await post(`/a/${other}`, await as(ben), [...row("2026-11-06", "09:00", "12:00"), ["tz", "UTC"]]);
+		}
+		const limited = await post(`/a/${token}`, await as(ben), [...row("2026-11-06", "09:00", "12:00"), ["tz", "UTC"]]);
+		expect(limited.status).toBe(429);
+		const html = await limited.text();
+		expect(html).toContain("You've already answered 3 requests from Anna in the last 24 hours.");
+		expect(html).not.toContain("Limit reached");
 	});
 
 	it("tells the starter it's their own request, and others that someone else answered", async () => {

@@ -10,13 +10,14 @@ const STYLE = `
 body { font: 16px/1.5 system-ui, sans-serif; max-width: 480px; margin: 32px auto; padding: 0 16px; color: #1a1a1a; background: #fff; }
 a { color: #0f5f5a; } h1 { font-size: 1.5rem; line-height: 1.2; } .muted { color: #5c5c5c; font-size: 0.9rem; }
 .error { color: #b42318; font-weight: 600; }
-.row { display: grid; grid-template-columns: minmax(0, 1fr) 84px 84px; gap: 6px; margin-bottom: 8px; }
+.row { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; padding-bottom: 12px; margin-bottom: 12px; border-bottom: 1px solid #e4e4e0; }
+.row .day { grid-column: 1 / -1; }
 .row label { display: flex; flex-direction: column; font-size: 12px; color: #5c5c5c; }
 input { min-height: 44px; font: inherit; font-size: 16px; padding: 0 6px; border: 1px solid #cfcfcb; border-radius: 8px; width: 100%; box-sizing: border-box; }
 .button { display: block; width: 100%; min-height: 50px; border: none; border-radius: 12px; background: #0f5f5a; color: #fff; font: inherit;
   font-weight: 700; text-align: center; line-height: 50px; text-decoration: none; cursor: pointer; margin: 16px 0 8px; }
 #add { background: none; border: 1px dashed #0f5f5a; color: #0f5f5a; border-radius: 8px; min-height: 40px; padding: 0 12px; font: inherit; cursor: pointer; }
-@media (prefers-color-scheme: dark) { body { color: #e8e8e8; background: #141414; } a { color: #6cc4bb; } .muted, .row label { color: #a8a8a8; }
+@media (prefers-color-scheme: dark) { body { color: #e8e8e8; background: #141414; } a { color: #6cc4bb; } .muted, .row label { color: #a8a8a8; } .row { border-color: #333; }
   input { background: #1f1f1f; color: #e8e8e8; border-color: #555; } .error { color: #f97066; } #add { color: #6cc4bb; border-color: #6cc4bb; } }
 `;
 
@@ -61,10 +62,11 @@ function heading(r: Invitation): string {
 }
 
 /** Before sign-in: what this is, and one button. */
-export function introPage(r: Invitation, token: string): Response {
+export function introPage(r: Invitation, token: string, expired = false): Response {
 	return shell(
 		`${r.starterFirstName} would like to meet you`,
 		`${heading(r)}
+${expired ? `<p class="error" role="alert">Your sign-in expired before you sent your times. Sign in again and add them once more.</p>` : ""}
 <p>Add the times you're free. ${esc(r.starterFirstName)} won't see them: if a time fits, you both get one calendar invite.</p>
 <a class="button" href="/a/${token}/signin">Continue with Google</a>
 <p class="muted">Neutra gets only your name and email from Google, to send you the invite.</p>`,
@@ -73,7 +75,7 @@ export function introPage(r: Invitation, token: string): Response {
 
 function rowHtml(row: Row, min: string, max: string): string {
 	return `<div class="row">
-<label>Day<input type="date" name="day" value="${esc(row.day)}" min="${min}" max="${max}"></label>
+<label class="day">Day<input type="date" name="day" value="${esc(row.day)}" min="${min}" max="${max}"></label>
 <label>From<input type="time" name="from" value="${esc(row.from)}"></label>
 <label>To<input type="time" name="to" value="${esc(row.to)}"></label>
 </div>`;
@@ -131,7 +133,7 @@ ${rows.map((row) => rowHtml(row, p.minDay, p.maxDay)).join("\n")}
 <button type="button" id="add" hidden>+ Add another time</button>
 <input type="hidden" name="tz" value="${esc(p.timeZone ?? "")}">
 <button type="submit" class="button">Send</button>
-<p class="muted">Signed in as ${esc(p.email)}. The invite goes to this address.</p>
+<p class="muted">Signed in as ${esc(p.email)}. The invite goes to this address. <a href="/a/${p.token}/signin">Use another Google account</a></p>
 </form>`,
 		{ nonce, script: SCRIPT, status: p.status },
 	);

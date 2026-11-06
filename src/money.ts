@@ -146,3 +146,38 @@ export function otherCurrencyIn(text: string, currency: string): string | null {
 	const sign = text.match(/[$€£¥₹₩₽₪₺₴₦₱฿]/)?.[0];
 	return sign && sign !== narrowSymbol(code) ? sign : null;
 }
+
+/**
+ * Splits "10000-20000" (also "10000 - 20000", "10000 to 20000", an en or em dash) into its two ends, or null for
+ * a single amount. The second end must start with a digit (or a currency code), so "1700.-" stays one amount.
+ */
+export function splitRange(text: string): [string, string] | null {
+	const m = /^(.*\d.*?)\s*(?:–|—|\bto\b|-)\s*([A-Za-z]{0,3}\s*\d.*)$/i.exec(text.trim());
+	return m ? [m[1].trim(), m[2].trim()] : null;
+}
+
+/** "10,000": an amount without its currency, for ranges. */
+export function formatNumber(minor: number, currency: string): string {
+	return formatAmount(minor, currency).replace(/^[A-Z]{3} /, "");
+}
+
+/**
+ * A limit an assistant sent: one amount, or a range of which Neutra keeps only the walk-away end, the high end
+ * for the most someone would pay, the low end for the least they'd accept. The other end is never kept.
+ */
+export function parseLimit(
+	value: string | number,
+	currency: string,
+	side: "PAYS" | "RECEIVES",
+): { minor: number; range?: { low: number; high: number } } {
+	const ends = typeof value === "string" ? splitRange(value) : null;
+	if (!ends) return { minor: parseAmount(value, currency) };
+	const [low, high] = ends.map((end) => parseAmount(end, currency));
+	if (low >= high) {
+		throw new ApiError(
+			"INVALID_ARGUMENT",
+			`The range "${value}" ${low === high ? "has the same number at both ends" : "goes from high to low"}. Send the lower number first, e.g. "10000-20000", or one number.`,
+		);
+	}
+	return { minor: side === "PAYS" ? high : low, range: { low, high } };
+}

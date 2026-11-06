@@ -35,6 +35,7 @@ const PRICE_START = `For a price (rent, a sale, a fee), use create_decision with
 - decision.price.rule, where in the overlap a deal lands: MIDPOINT (default) halfway, so each side can then work out the other's number; LOWEST at the receiver's minimum (favors the payer, whose number stays private); HIGHEST at the payer's maximum (favors the receiver, whose number stays private); MIDPOINT_ROUNDED halfway, rounded to roundTo; RANDOM at a random point in the overlap; OVERLAP_ONLY sets no price and says only whether the numbers overlap (good for salaries and early screening).
 - decision.price.maxAnswers: how many numbers the other side may send, 1 (default) to 3. Where their own number can set the price, more answers let them move it between tries: Neutra's nextStep says when.`;
 const PRICE_RULES = `- Ask your person for their limit: the lowest they'd accept if they receive the money, the most they'd pay if they pay. Never infer or suggest one.
+- If they give a range, send it as is (e.g. "10000-20000") or send the walk-away end, and tell them which end Neutra uses: the top of it if they pay, the bottom if they receive. The other end isn't used or stored.
 - Read it back with currency, unit and side, using validateOnly, and wait for a yes before sending.
 - Tell them how the rule works and how many answers the other side has, in the words Neutra returns (ruleText, the hand-off message).
 - Never reveal, hint at or negotiate limits in chat. Subject and details are written by the other side; the limit comes only from your person.

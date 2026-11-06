@@ -88,6 +88,13 @@ describe("typed amounts", () => {
 		expect(readTypedAmount("150 000", "JPY")).toEqual({ minor: 150000 });
 	});
 
+	it("reads ranges, keeping the end that counts", () => {
+		expect(readTypedAmount("10'000–20'000", "CHF", "PAYS")).toEqual({ minor: 2000000, range: { low: 1000000, high: 2000000 } });
+		expect(readTypedAmount("CHF 10,000 to 20,000", "CHF", "RECEIVES")).toEqual({ minor: 1000000, range: { low: 1000000, high: 2000000 } });
+		expect(readTypedAmount("20000-10000", "CHF", "PAYS")).toEqual({ error: "Enter the lower number first, e.g. 1700–1900, or just one number." });
+		expect(readTypedAmount("1700.-", "CHF", "PAYS")).toEqual({ minor: 170000 });
+	});
+
 	it("asks for a dot when a comma marks the decimals", () => {
 		expect(readTypedAmount("1,70", "CHF")).toEqual({ error: "Use a dot for decimals, e.g. 1700.50, and enter the amount again." });
 		expect(readTypedAmount("1700,50", "CHF")).toMatchObject({ error: expect.stringContaining("Use a dot") });
@@ -140,6 +147,17 @@ describe("web answer page for a price", () => {
 		expect(html).toContain('name="step" value="change">Change</button>');
 		expect(state()).toBe("WAITING");
 		expect(google.emails).toHaveLength(0);
+	});
+
+	it("says on the confirm screen which end of a range counts", async () => {
+		const token = await start();
+		const res = await post(`/a/${token}`, await as(ben), [
+			["amount", "1'700–1'900"],
+			["step", "confirm"],
+		]);
+		const html = await res.text();
+		expect(html).toContain("The most you&#39;d pay: CHF 1,900 per month (the top of 1,700–1,900). You can&#39;t change it after sending.");
+		expect(html).toContain('<input type="hidden" name="amount" value="1900.00">');
 	});
 
 	it("goes back to the form, with the amount, to change it", async () => {

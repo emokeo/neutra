@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatAmount, midpoint, minorDigits, parseAmount, plainAmount } from "../src/money";
+import { formatAmount, midpoint, minorDigits, parseAmount, parseLimit, plainAmount, splitRange } from "../src/money";
 import { sealLimit, unsealLimit } from "../src/seal";
 
 describe("currencies", () => {
@@ -51,6 +51,29 @@ describe("parseAmount", () => {
 	it("caps amounts at 10^13 smallest units", () => {
 		expect(parseAmount("100000000000", "CHF")).toBe(10 ** 13);
 		expect(() => parseAmount("100000000000.01", "CHF")).toThrow("more than Neutra can handle");
+	});
+});
+
+describe("ranges", () => {
+	it("are split on a dash, an en or em dash, or 'to'", () => {
+		for (const text of ["10000-20000", "10000 - 20000", "10000 to 20000", "10000–20000", "10000 — 20000"]) {
+			expect(splitRange(text)).toEqual(["10000", "20000"]);
+		}
+		expect(splitRange("1700")).toBeNull();
+		expect(splitRange("1700.-")).toBeNull();
+		expect(splitRange("-5")).toBeNull();
+	});
+
+	it("keep only the walk-away end: the top for the payer, the bottom for the receiver", () => {
+		expect(parseLimit("10000-20000", "CHF", "PAYS")).toEqual({ minor: 2000000, range: { low: 1000000, high: 2000000 } });
+		expect(parseLimit("10000 to 20000", "CHF", "RECEIVES")).toEqual({ minor: 1000000, range: { low: 1000000, high: 2000000 } });
+		expect(parseLimit("1850", "CHF", "PAYS")).toEqual({ minor: 185000 });
+	});
+
+	it("are refused when reversed or equal, or when an end isn't a plain amount", () => {
+		expect(() => parseLimit("20000-10000", "CHF", "PAYS")).toThrow('The range "20000-10000" goes from high to low. Send the lower number first');
+		expect(() => parseLimit("10000-10000", "CHF", "PAYS")).toThrow("has the same number at both ends");
+		expect(() => parseLimit("10'000-20000", "CHF", "PAYS")).toThrow("isn't a plain amount");
 	});
 });
 

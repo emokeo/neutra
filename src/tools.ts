@@ -25,11 +25,15 @@ const DecisionName = z.string().describe('The decision\'s name, e.g. "decisions/
 const MinimumToAccept = z
 	.string()
 	.optional()
-	.describe('The lowest your person would accept, if they receive the money. Digits with an optional dot, as a string, e.g. "1850".');
+	.describe(
+		'The lowest your person would accept, if they receive the money: a number, or a range like "10000-20000" (Neutra uses the least they\'d accept, the low end). Digits with an optional dot, as a string, e.g. "1850".',
+	);
 const MaximumToPay = z
 	.string()
 	.optional()
-	.describe('The most your person would pay, if they pay. Digits with an optional dot, as a string, e.g. "1850".');
+	.describe(
+		'The most your person would pay, if they pay: a number, or a range like "10000-20000" (Neutra uses the most they\'d pay, the high end). Digits with an optional dot, as a string, e.g. "1850".',
+	);
 const ValidateOnly = z.boolean().optional();
 
 const MeetingAnswer = z.object({ availableWindows: AvailableWindows, timeZone: TimeZone });

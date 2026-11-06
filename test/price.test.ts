@@ -183,6 +183,26 @@ Open until Tue 17 Nov.`);
 		);
 	});
 
+	it("takes a range and says which end it uses", async () => {
+		const check = await createPriceDecision(env, anna, { price: rent, starterAnswer: { minimumToAccept: "1700 - 1900" }, validateOnly: true });
+		expect(check.receivedLimit).toBe(
+			'From 1,700–1,900 Neutra uses CHF 1,700 per month, the least you\'d accept for "Rent for the flat at Seestrasse 12 (utilities included)". The other end isn\'t used or stored',
+		);
+		await rejects(
+			createPriceDecision(env, anna, { price: rent, starterAnswer: { minimumToAccept: "1900-1700" } }),
+			"INVALID_ARGUMENT",
+			"goes from high to low",
+		);
+		const d = await annaLets("1700-1900");
+		expect(JSON.stringify(row())).not.toContain("1900");
+		const answer = await createPriceAnswer(env, ben, { code: d.combined, price: { maximumToPay: "1500 to 1800" }, validateOnly: true });
+		expect(answer.receivedLimit).toContain("From 1,500–1,800 Neutra uses CHF 1,800 per month, the most you'd pay");
+		const result = await createPriceAnswer(env, ben, { code: d.combined, price: { maximumToPay: "1500 to 1800" } });
+		// 1700 (the bottom of Anna's range) and 1800 (the top of Ben's): halfway is 1750.
+		expect(result.decision).toMatchObject({ price: { agreedPriceText: "CHF 1,750 per month" } });
+		await rejects(createPriceAnswer(env, eve, { code: (await annaLets()).combined, price: { maximumToPay: "1800-1800" } }), "INVALID_ARGUMENT", "Not counted.");
+	});
+
 	it("takes a deadline from the starter, at the end of that day", async () => {
 		const d = await createPriceDecision(env, anna, { price: { ...rent, answerBy: "2026-11-10" }, starterAnswer: { minimumToAccept: "1700" } });
 		if (d.validateOnly) throw new Error("expected a decision");

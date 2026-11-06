@@ -23,7 +23,7 @@ import {
 import { personId, recordEvent } from "./events";
 import { checkCreateAnswer, checkCreateDecision, checkPriceAnswer, LIMITS, PRICE_REQUESTS_TODAY, priceAnswerLimit } from "./limits";
 import { CLAUDE_DIRECTORY_URL } from "./links";
-import { currencyCode, formatAmount, minorDigits, otherCurrencyIn, parseAmount, plainAmount } from "./money";
+import { currencyCode, formatAmount, formatNumber, minorDigits, otherCurrencyIn, parseAmount, parseLimit, plainAmount } from "./money";
 import {
 	answersText,
 	dealPrice,
@@ -184,9 +184,15 @@ function deadline(answerBy: string | undefined, now: number): number {
 	return Math.min(day + DAY_MS - 1, latest);
 }
 
-/** 'CHF 1,850 per month, the least you'd accept for "Rent"': worded to be read back to the person as it is. */
-function limitText(side: Side, minor: number, terms: PriceTerms): string {
-	return `${formatAmount(minor, terms.currency, terms.unit)}, ${askFor(side, "you")} for "${subjectText(terms)}"`;
+/**
+ * 'CHF 1,850 per month, the least you'd accept for "Rent"': worded to be read back to the person as it is.
+ * For a range it says which end Neutra uses, and that the other end is gone.
+ */
+function limitText(side: Side, minor: number, terms: PriceTerms, range?: { low: number; high: number }): string {
+	const used = `${formatAmount(minor, terms.currency, terms.unit)}, ${askFor(side, "you")} for "${subjectText(terms)}"`;
+	if (!range) return used;
+	const from = `${formatNumber(range.low, terms.currency)}–${formatNumber(range.high, terms.currency)}`;
+	return `From ${from} Neutra uses ${used}. The other end isn't used or stored`;
 }
 
 /** The deadline as a day, "2026-11-17" (UTC), as the starter set it. */
@@ -333,7 +339,7 @@ export async function createPriceDecision(
 		);
 	}
 	const starterSide: Side = maximumToPay !== undefined ? "PAYS" : "RECEIVES";
-	const minor = parseAmount((maximumToPay ?? minimumToAccept) as string | number, currency);
+	const { minor, range } = parseLimit((maximumToPay ?? minimumToAccept) as string | number, currency, starterSide);
 	for (const [field, text] of [["subject", subject], ["details", details], ["unit", unit]] as const) {
 		if (text && mentionsLimit(text, minor, currency)) {
 			throw new ApiError(
@@ -371,7 +377,7 @@ export async function createPriceDecision(
 		maxAnswers,
 		...(roundTo ? { roundTo } : {}),
 	};
-	const receivedLimit = limitText(starterSide, minor, terms);
+	const receivedLimit = limitText(starterSide, minor, terms, range);
 	// Said to the starter, not stored: how the rule works for them, and whether several answers let the other side
 	// move their number between tries.
 	const warning = starterCaution(terms.rule, maxAnswers, starterSide);
@@ -520,14 +526,15 @@ export async function createPriceAnswer(
 		throw new ApiError("INVALID_ARGUMENT", `This request is in ${terms.currency}; send just the number, e.g. "1700". Not counted.`);
 	}
 	let minor: number;
+	let range: { low: number; high: number } | undefined;
 	try {
-		minor = parseAmount(value, terms.currency);
+		({ minor, range } = parseLimit(value, terms.currency, side));
 	} catch (error) {
 		notCounted(error);
 	}
 	await checkCreateAnswer(env, caller.email, row.starter_email, row.id, now);
 	await checkPriceAnswer(env, caller.email, row.stats_ref, now);
-	const receivedLimit = limitText(side, minor, terms);
+	const receivedLimit = limitText(side, minor, terms, range);
 	if (request.validateOnly) {
 		return { validateOnly: true as const, receivedLimit };
 	}

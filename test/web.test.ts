@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createDecision } from "../src/decisions";
+import { GoogleHandler } from "../src/google-handler";
+import { homePage } from "../src/pages";
 import { WebAnswer, webCallback } from "../src/web-answer";
 import { durationText, rowsToWindows } from "../src/web-form";
 import { LOGIN_COOKIE, SESSION_COOKIE, sign, verify } from "../src/web-session";
@@ -299,5 +301,30 @@ describe("web sign-in callback", () => {
 		expect(res.headers.get("location")).toBe(`http://localhost/a/${token}`);
 		const session = /__Host-neutra-web=([^;]+)/.exec(res.headers.get("set-cookie") ?? "")?.[1];
 		expect(await verify(KEY, "web-session", session)).toMatchObject({ e: "ben@example.com", n: "Ben" });
+	});
+});
+
+describe("steps page and home page", () => {
+	it("takes the code pasted on the steps page to the answer page", async () => {
+		const token = await start();
+		const [id, code] = token.split(".");
+		const go = (pasted: string) => GoogleHandler.request(`/r/${id}/answer?code=${encodeURIComponent(pasted)}`, {}, env);
+		// The whole line, the bare combined code, or just the 12 characters after the dot.
+		for (const pasted of [`Answer Neutra request neutra:${id}.${code}. I'm free: …`, `neutra:${id}.${code}`, code]) {
+			const res = await go(pasted);
+			expect(res.status).toBe(303);
+			expect(res.headers.get("location")).toBe(`/a/${id}.${code}`);
+		}
+		const bad = await go(`neutra:${id}.abc`);
+		expect(bad.headers.get("location")).toBe(`/r/${id}?bad=1#browser`);
+	});
+
+	it("has link previews and a copy button for the address", async () => {
+		const html = await homePage("https://neutra.example.dev/mcp").text();
+		expect(html).toContain('<meta property="og:image" content="https://neutra.example.dev/og.png">');
+		expect(html).toContain('data-copy="https://neutra.example.dev/mcp"');
+		const image = await GoogleHandler.request("/og.png", {}, env);
+		expect(image.headers.get("content-type")).toBe("image/png");
+		expect((await image.arrayBuffer()).byteLength).toBeGreaterThan(1000);
 	});
 });

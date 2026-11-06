@@ -32,7 +32,7 @@ Details: [privacy page](https://neutra.day/privacy).
 
 ## Try it
 
-1. In Claude: **Customize → Connectors → Add custom connector**, URL `https://neutra.day/mcp`, then **Add**.
+1. In Claude: open [Neutra in the connector directory](https://claude.ai/directory/connectors/neutra) and **Connect**. Other assistants: add `https://neutra.day/mcp` as a custom connector.
 2. Sign in with Google. Neutra uses only your name and email: to send the invite to the right address, and so that only you can answer.
 3. Ask: *"Use Neutra to find an hour with Ben next week. I'm free Tuesday and Thursday, 18:00–21:00."* Forward the message it gives you.
 

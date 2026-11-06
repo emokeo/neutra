@@ -105,7 +105,8 @@ describe("create_decision", () => {
 		expect(message).toContain("Neither of you shares your calendar");
 		const id = decision.name.split("/")[1];
 		// The connector address in plain sight, and why it has to be added by hand.
-		expect(message).toContain("as a custom connector (it isn't in connector directories yet): https://neutra.example.dev/mcp");
+		expect(message).toContain("In Claude it's in the connector directory: https://claude.ai/directory/connectors/neutra");
+		expect(message).toContain("Other assistants: add https://neutra.example.dev/mcp as a custom connector.");
 		// What is shared, said plainly: the question a careful assistant asks before a sign-in.
 		expect(message).toContain("Neutra gets only your name and email");
 		expect(message).toContain(`https://neutra.example.dev/r/${id}`);

@@ -25,8 +25,9 @@ jobs:
       - name: tests
         run: |
           npm test > test.log 2>&1 || {
-            # One annotation with the whole report: GitHub shows at most 10 separate ones.
-            msg=$(sed 's/\x1b\[[0-9;]*m//g' test.log | grep -v -E "^\s*$" | tail -c 12000 | sed -e ':a' -e 'N' -e '$!ba' -e 's/%/%25/g' -e 's/\r/%0D/g' -e 's/\n/%0A/g')
+            # One annotation (GitHub shows at most 10, and cuts long ones): the failures first, without the
+            # log noise of passing tests, so the reason is visible on the PR.
+            msg=$(sed 's/\x1b\[[0-9;]*m//g' test.log | grep -v -E "^\s*$|^(stdout|stderr) \||^\{\"job\"|^\s+at " | grep -A 25 -E "FAIL|AssertionError|Error:|×" | head -c 6000 | sed -e ':a' -e 'N' -e '$!ba' -e 's/%/%25/g' -e 's/\r/%0D/g' -e 's/\n/%0A/g')
             echo "::error title=tests::$msg"
             exit 1
           }

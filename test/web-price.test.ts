@@ -224,6 +224,27 @@ describe("web answer page for a price", () => {
 		expect(pages[0]).toContain("If you still want to agree on a price, ask Anna to send a new request.");
 	});
 
+	it("says how many answers there are and the rule, and lets the person try again after a no-deal", async () => {
+		const d = await createPriceDecision(env, anna, {
+			price: { subject: "Rent for the flat", currencyCode: "CHF", unit: "per month", maxAnswers: 2, rule: "LOWEST" },
+			starterAnswer: { minimumToAccept: "1700" },
+		});
+		if (d.validateOnly) throw new Error("expected a decision");
+		const token = (d.decision.code as string).replace(/^neutra:/, "");
+		const cookie = await as(ben);
+		const form = await (await get(`/a/${token}`, cookie)).text();
+		expect(form).toContain("You have 2 answers.");
+		expect(form).toContain("you pay Anna&#39;s minimum, never more. Anna never learns your number.");
+		await post(`/a/${token}`, cookie, [["amount", "1600"], ["step", "send"]]);
+		const again = await (await get(`/a/${token}`, cookie)).text();
+		expect(again).toContain("No deal yet: your number didn&#39;t reach theirs. 1 answer left.");
+		expect(again).toContain('name="amount"');
+		await post(`/a/${token}`, cookie, [["amount", "1800"], ["step", "send"]]);
+		const result = await (await get(`/a/${token}`, cookie)).text();
+		expect(result).toContain("Deal: CHF 1,700 per month for Rent for the flat.");
+		expect(result).toContain("That's the lowest price you both accept.");
+	});
+
 	it("tells the starter it's their own request", async () => {
 		const token = await start();
 		expect(await (await get(`/a/${token}`, await as(anna))).text()).toContain("Send the link to the other person: they answer it, not you.");

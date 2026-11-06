@@ -81,6 +81,7 @@ describe("starting a price decision", () => {
 			unit: "per month",
 			starterSide: "RECEIVES",
 			rule: "MIDPOINT",
+			maxAnswers: 1,
 		});
 		expect(stored.limit_sealed).toBeTruthy();
 		expect(JSON.stringify(stored)).not.toContain("1850");
@@ -102,6 +103,7 @@ describe("starting a price decision", () => {
 				unit: "per month",
 				answerBy: "2026-11-17",
 				rule: "MIDPOINT",
+				maxAnswers: 1,
 				yourSide: "RECEIVES",
 			},
 			state: "WAITING",
@@ -119,7 +121,7 @@ describe("starting a price decision", () => {
 		const id = d.name.split("/")[1];
 		expect(d.decision.handoffMessage).toBe(`Anna wants to agree on a price with you through Neutra (neutra.example.dev): Rent for the flat at Seestrasse 12 (utilities included), in CHF per month. You pay; Anna receives.
 
-You each tell Neutra one number in private: you the most you'd pay, Anna the least they'd accept. If yours is at least theirs, the price is halfway between them. If not, you both hear only "no deal" and neither learns the other's number. You have one answer, so give your real maximum, not an opening offer. A deal isn't a contract: you two confirm it yourselves.
+You each tell Neutra one number in private: you the most you'd pay, Anna the least they'd accept. If your number reaches theirs, the price is halfway between them. You can then each work out the other's number. If not, you both hear only "no deal" and neither learns the other's number. You have one answer, so give your real maximum, not an opening offer. A deal isn't a contract: you two confirm it yourselves.
 
 To answer:
 1. Add Neutra to your AI assistant. In Claude it's in the connector directory: https://claude.ai/directory/connectors/neutra
@@ -136,7 +138,7 @@ Open until Tue 17 Nov.`);
 		if (d.validateOnly) throw new Error("expected a decision");
 		const message = d.decision.handoffMessage as string;
 		expect(message).toContain("Old bike, in EUR. Anna pays; you receive.");
-		expect(message).toContain("you the least you'd accept, Anna the most they'd pay. If yours is at most theirs");
+		expect(message).toContain("you the least you'd accept, Anna the most they'd pay. If your number reaches theirs, the price is halfway between them. You can then each work out the other's number.");
 		expect(message).toContain("give your real minimum");
 		expect(message).toContain(`The least I'd accept is EUR ….`);
 		expect(d.receivedLimit).toBe('EUR 120, the most you\'d pay for "Old bike"');
@@ -144,7 +146,11 @@ Open until Tue 17 Nov.`);
 
 	it("with validateOnly, reads the limit back and stores nothing", async () => {
 		const result = await createPriceDecision(env, anna, { price: rent, starterAnswer: { minimumToAccept: "1850.5" }, validateOnly: true });
-		expect(result).toEqual({ validateOnly: true, receivedLimit: 'CHF 1,850.50 per month, the least you\'d accept for "Rent for the flat at Seestrasse 12 (utilities included)"' });
+		expect(result).toEqual({
+			validateOnly: true,
+			receivedLimit: 'CHF 1,850.50 per month, the least you\'d accept for "Rent for the flat at Seestrasse 12 (utilities included)"',
+			caution: "If your number reaches theirs, the price is halfway between them. You can then each work out the other's number.",
+		});
 		expect((db.db.prepare("SELECT COUNT(*) AS n FROM decisions").get() as { n: number }).n).toBe(0);
 		expect((db.db.prepare("SELECT COUNT(*) AS n FROM events").get() as { n: number }).n).toBe(0);
 	});
@@ -205,7 +211,7 @@ describe("answering a price request", () => {
 		expect(google.emails).toHaveLength(1);
 		const email = google.emails[0].raw;
 		expect(email).toContain("To: anna@example.com, ben@example.com");
-		expect(email).toContain("You have a deal through Neutra: Rent for the flat at Seestrasse 12 (utilities included) at CHF 1,775 per month.");
+		expect(email).toContain("You have a deal through Neutra: Rent for the flat at Seestrasse 12 (utilities included) at CHF 1,775 per month (halfway between your numbers).");
 		expect(email).toContain("not a contract");
 		expect(email).not.toContain("1,700");
 		expect(email).not.toContain("1,850");
@@ -243,7 +249,8 @@ describe("answering a price request", () => {
 		await rejects(createPriceAnswer(env, anna, { code: d.combined, price: { minimumToAccept: "1600" } }), "PERMISSION_DENIED");
 		await createPriceAnswer(env, ben, { code: d.combined, price: { maximumToPay: "1600" } });
 		await rejects(createPriceAnswer(env, ben, { code: d.combined, price: { maximumToPay: "1800" } }), "FAILED_PRECONDITION", "already been answered");
-		await rejects(createPriceAnswer(env, eve, { code: d.combined, price: { maximumToPay: "1800" } }), "FAILED_PRECONDITION", "already been answered");
+		// The code is bound to Ben now.
+		await rejects(createPriceAnswer(env, eve, { code: d.combined, price: { maximumToPay: "1800" } }), "PERMISSION_DENIED", "already used by someone else");
 	});
 
 	it("lets only one of two answers at the same moment through", async () => {
@@ -352,7 +359,7 @@ describe("answering a price request", () => {
 		const error = await rejects(
 			createPriceAnswer(env, ben, { code: fourth, price: { maximumToPay: "50" } }),
 			"RESOURCE_EXHAUSTED",
-			"3 price answers per day",
+			"3 price requests answered per day",
 		);
 		expect(error.reason).toBe("PRICE_ANSWER_LIMIT");
 		// A day later it's fine again.
@@ -412,6 +419,8 @@ describe("get_decision with a code", () => {
 				currencyCode: "CHF",
 				unit: "per month",
 				rule: "MIDPOINT",
+				ruleText: "If your number reaches theirs, the price is halfway between them. You can then each work out the other's number.",
+				maxAnswers: 1,
 				yourSide: "PAYS",
 			},
 		});
@@ -457,7 +466,7 @@ describe("ending a price request", () => {
 		expect(row()).toMatchObject({ state: "EXPIRED", limit_sealed: null });
 		expect(google.emails).toHaveLength(1);
 		expect(google.emails[0].raw).toContain("To: anna@example.com");
-		expect(google.emails[0].raw).toContain("Nobody answered your Neutra price request about Rent for the flat at Seestrasse 12 by Tue 17 Nov.");
+		expect(google.emails[0].raw).toContain("Your Neutra price request about Rent for the flat at Seestrasse 12 ended on Tue 17 Nov without a deal.");
 		vi.setSystemTime(new Date("2026-11-17T08:20:00Z"));
 		await rejects(createPriceAnswer(env, ben, { code: d.combined, price: { maximumToPay: "1800" } }), "FAILED_PRECONDITION", "has ended");
 	});
@@ -531,9 +540,146 @@ describe("next steps for price decisions", () => {
 		expect(priceNextStep("create_decision", { ...view, state: "WAITING" })).toContain("Show the handoffMessage exactly as written.");
 		expect(priceNextStep("get_decision", { ...view, state: "WAITING" })).toBe("Waiting for the other side. Both of you get the result by email.");
 		expect(priceNextStep("create_answer", { ...view, state: "AGREED" })).toContain(
-			"Tell your person: deal on Rent at CHF 1,775 per month. This is an agreement in principle only, not a contract",
+			"Tell your person: deal on Rent at CHF 1,775 per month. This is an agreement in principle only, not a contract, and no payment is made; they settle the details directly. Each side can now work out the other's limit.",
 		);
 		expect(priceNextStep("create_answer", { ...view, state: "NO_MATCH" })).toContain("neither side learned the other's number");
-		expect(priceNextStep("get_decision", { ...view, state: "EXPIRED" })).toBe("Nobody answered by Tue 17 Nov. Your person can start a new request.");
+		expect(priceNextStep("get_decision", { ...view, state: "EXPIRED" })).toBe("The request ended on Tue 17 Nov without a deal. Your person can start a new request.");
+	});
+});
+
+describe("rules", () => {
+	async function start(price: object, minimum = "1700") {
+		const result = await createPriceDecision(env, anna, { price: { ...rent, ...price }, starterAnswer: { minimumToAccept: minimum } });
+		if (result.validateOnly) throw new Error("expected a decision");
+		return result;
+	}
+
+	it("LOWEST: the deal is at the receiver's minimum, and the payer's number stays private", async () => {
+		const d = await start({ rule: "LOWEST" });
+		expect(d.decision.handoffMessage).toContain("If your number reaches Anna's, you pay Anna's minimum, never more. Anna never learns your number.");
+		const result = await createPriceAnswer(env, ben, { code: d.decision.code as string, price: { maximumToPay: "1850" } });
+		expect(result.decision).toMatchObject({ state: "AGREED", price: { rule: "LOWEST", agreedPriceText: "CHF 1,700 per month" } });
+		expect(google.emails[0].raw).toContain("at CHF 1,700 per month (the lowest price you both accept).");
+		expect(google.emails[0].raw).not.toContain("1,850");
+	});
+
+	it("HIGHEST: the deal is at the payer's maximum, and the receiver's number stays private", async () => {
+		const d = await start({ rule: "HIGHEST" });
+		expect(d.decision.handoffMessage).toContain("you pay exactly the number you give. Give your real maximum only if you're happy to pay it.");
+		const result = await createPriceAnswer(env, ben, { code: d.decision.code as string, price: { maximumToPay: "1850" } });
+		expect(result.decision).toMatchObject({ price: { agreedPriceText: "CHF 1,850 per month" } });
+		expect(google.emails[0].raw).toContain("(the highest price you both accept)");
+	});
+
+	it("MIDPOINT_ROUNDED: halfway to the step, shown to both sides", async () => {
+		const d = await start({ rule: "MIDPOINT_ROUNDED", roundTo: "50" });
+		expect(d.decision.price).toMatchObject({ rule: "MIDPOINT_ROUNDED", roundTo: "50.00" });
+		expect(d.decision.handoffMessage).toContain("halfway between them, rounded to CHF 50.");
+		const { preview } = await requestPreview(env, ben, d.decision.code as string);
+		expect(preview.price).toMatchObject({ roundTo: "50.00", ruleText: expect.stringContaining("rounded to CHF 50") });
+		const result = await createPriceAnswer(env, ben, { code: d.decision.code as string, price: { maximumToPay: "1851" } });
+		expect(result.decision).toMatchObject({ price: { agreedPriceText: "CHF 1,800 per month" } });
+		expect(google.emails[0].raw).toContain("(halfway, rounded to CHF 50)");
+	});
+
+	it("MIDPOINT_ROUNDED: without roundTo, a step of about 1% of the starter's number", async () => {
+		const d = await start({ rule: "MIDPOINT_ROUNDED" }, "1850");
+		expect(d.decision.price).toMatchObject({ roundTo: "10.00" });
+		await rejects(start({ rule: "MIDPOINT", roundTo: "50" }), "INVALID_ARGUMENT", 'roundTo applies only to rule "MIDPOINT_ROUNDED"');
+		await rejects(start({ rule: "MIDPOINT_ROUNDED", roundTo: "fifty" }), "INVALID_ARGUMENT", "isn't a plain amount");
+	});
+
+	it("RANDOM: a point inside the overlap", async () => {
+		const d = await start({ rule: "RANDOM" });
+		const result = await createPriceAnswer(env, ben, { code: d.decision.code as string, price: { maximumToPay: "1710" } });
+		const agreed = Number(result.decision?.price.agreedPrice);
+		expect(agreed).toBeGreaterThanOrEqual(1700);
+		expect(agreed).toBeLessThanOrEqual(1710);
+		expect(Number.isInteger(agreed)).toBe(true);
+		expect(google.emails[0].raw).toContain("(a random point between your numbers)");
+	});
+
+	it("refuses an unknown rule and out-of-range answer counts", async () => {
+		await rejects(start({ rule: "STARTER_PRICE" }), "INVALID_ARGUMENT", 'rule must be one of "MIDPOINT", "LOWEST", "HIGHEST", "MIDPOINT_ROUNDED", "RANDOM"');
+		await rejects(start({ maxAnswers: 4 }), "INVALID_ARGUMENT", "maxAnswers must be a whole number from 1 to 3");
+		await rejects(start({ maxAnswers: 0 }), "INVALID_ARGUMENT", "maxAnswers");
+	});
+});
+
+describe("several answers", () => {
+	async function start(maxAnswers: number, rule = "MIDPOINT") {
+		const result = await createPriceDecision(env, anna, { price: { ...rent, maxAnswers, rule }, starterAnswer: { minimumToAccept: "1700" } });
+		if (result.validateOnly) throw new Error("expected a decision");
+		return result;
+	}
+
+	it("are told to both sides up front", async () => {
+		const d = await start(2);
+		expect(d.decision.price.maxAnswers).toBe(2);
+		expect(d.decision.handoffMessage).toContain('You have 2 answers: after a "no deal" you can send another number.');
+		expect(d.caution).toContain("the other side can start low and raise their number");
+		const { preview } = await requestPreview(env, ben, d.decision.code as string);
+		expect(preview.price?.maxAnswers).toBe(2);
+		expect(codeNextStep(preview, false)).toContain("They have 2 answers.");
+		// Under LOWEST with a paying responder, their number never sets the price: no warning.
+		expect((await start(2, "LOWEST")).caution).not.toContain("start low");
+	});
+
+	it("keep the request open after a no-deal, without the starter seeing the failed try", async () => {
+		const d = await start(2);
+		const code = d.decision.code as string;
+		const first = await createPriceAnswer(env, ben, { code, price: { maximumToPay: "1600" } });
+		expect(first.decision).toMatchObject({ state: "WAITING", remainingAttempts: 1 });
+		expect(priceNextStep("create_answer", first.decision!)).toBe(
+			"No deal yet: your person's number didn't reach the other side's. 1 answer left. Your person may send another number with create_answer, or stop here. Don't suggest a number.",
+		);
+		expect(row()).toMatchObject({ state: "WAITING", attempts: 1, responder_email: ben.email, code_used: 0 });
+		expect(row().limit_sealed).toBeTruthy();
+		expect(google.emails).toHaveLength(0);
+
+		// Anna sees exactly what she saw before the try.
+		const before = d.decision;
+		const seen = await getDecision(env, anna, d.decision.name);
+		expect(seen).toEqual({ ...before, code: undefined, handoffMessage: undefined });
+		expect(JSON.stringify(seen)).not.toMatch(/remainingAttempts|RESPONDER|Ben|updateTime/);
+		expect((await requestPreview(env, anna, code)).preview.open).toBe(true);
+
+		// Only Ben can go on, and a deal settles it.
+		await rejects(createPriceAnswer(env, eve, { code, price: { maximumToPay: "1900" } }), "PERMISSION_DENIED");
+		const second = await createPriceAnswer(env, ben, { code, price: { maximumToPay: "1800" } });
+		expect(second.decision).toMatchObject({ state: "AGREED", price: { agreedPriceText: "CHF 1,750 per month" } });
+		expect(second.decision).not.toHaveProperty("remainingAttempts");
+		expect(google.emails).toHaveLength(1);
+		const events = db.db.prepare("SELECT detail_json FROM events WHERE type = 'answer_submitted' ORDER BY id").all() as { detail_json: string }[];
+		expect(events.map((e) => JSON.parse(e.detail_json).outcome)).toEqual(["retry", "agreed"]);
+	});
+
+	it("end as no deal after the last try, with one email", async () => {
+		const d = await start(3);
+		const code = d.decision.code as string;
+		for (const [n, left] of [[1, 2], [2, 1]] as const) {
+			const result = await createPriceAnswer(env, ben, { code, price: { maximumToPay: String(1500 + n) } });
+			expect(result.decision).toMatchObject({ state: "WAITING", remainingAttempts: left });
+		}
+		const last = await createPriceAnswer(env, ben, { code, price: { maximumToPay: "1600" } });
+		expect(last.decision).toMatchObject({ state: "NO_MATCH" });
+		expect(row()).toMatchObject({ limit_sealed: null, code_used: 1, attempts: 3 });
+		expect(google.emails).toHaveLength(1);
+		await rejects(createPriceAnswer(env, ben, { code, price: { maximumToPay: "1900" } }), "FAILED_PRECONDITION", "already been answered");
+	});
+
+	it("count as one request toward the daily limit", async () => {
+		const a = await start(3);
+		await createPriceAnswer(env, ben, { code: a.decision.code as string, price: { maximumToPay: "10" } });
+		await createPriceAnswer(env, ben, { code: a.decision.code as string, price: { maximumToPay: "20" } });
+		for (const minimum of ["200", "300"]) {
+			const d = await annaLets(minimum);
+			await createPriceAnswer(env, ben, { code: d.combined, price: { maximumToPay: "50" } });
+		}
+		// Three requests answered today: a fourth is refused, but the first one's last try still goes through.
+		const fourth = await annaLets("400");
+		await rejects(createPriceAnswer(env, ben, { code: fourth.combined, price: { maximumToPay: "50" } }), "RESOURCE_EXHAUSTED");
+		const last = await createPriceAnswer(env, ben, { code: a.decision.code as string, price: { maximumToPay: "30" } });
+		expect(last.decision).toMatchObject({ state: "NO_MATCH" });
 	});
 });

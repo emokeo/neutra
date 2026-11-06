@@ -21,24 +21,38 @@ import {
 	sha256,
 } from "./decisions";
 import { personId, recordEvent } from "./events";
-import { checkCreateAnswer, checkCreateDecision, checkPriceAnswer, LIMITS, PRICE_ANSWERS_TODAY, priceAnswerLimit } from "./limits";
+import { checkCreateAnswer, checkCreateDecision, checkPriceAnswer, LIMITS, PRICE_REQUESTS_TODAY, priceAnswerLimit } from "./limits";
 import { CLAUDE_DIRECTORY_URL } from "./links";
-import { currencyCode, formatAmount, midpoint, minorDigits, otherCurrencyIn, parseAmount, plainAmount } from "./money";
+import { currencyCode, formatAmount, minorDigits, otherCurrencyIn, parseAmount, plainAmount } from "./money";
+import {
+	answersText,
+	dealPrice,
+	dealText,
+	defaultStep,
+	MAX_PRICE_ANSWERS,
+	type Rule,
+	RULES,
+	ruleText,
+	type Side,
+	starterCaution,
+} from "./price-rules";
 import { sealLimit, unsealLimit } from "./seal";
 import { formatDay } from "./time";
 import { isAllowed } from "./utils";
 
-/** Who pays: the starter picks their side, the other person gets the opposite. */
-export type Side = "PAYS" | "RECEIVES";
+export type { Side } from "./price-rules";
 
-/** What both sides see. Stored as terms_json. */
+/** What both sides see. Stored as terms_json. Requests from before rules and answer counts existed have neither. */
 export type PriceTerms = {
 	subject: string;
 	details?: string;
 	currency: string;
 	unit?: string;
 	starterSide: Side;
-	rule: "MIDPOINT";
+	rule: Rule;
+	maxAnswers?: number;
+	// MIDPOINT_ROUNDED only: the step, in smallest units.
+	roundTo?: number;
 };
 
 /** decision.price as sent by the starter (neutra.v1.PriceDecision, input fields). */
@@ -48,6 +62,9 @@ export type PriceInput = {
 	currencyCode: string;
 	unit?: string;
 	answerBy?: string;
+	rule?: string;
+	maxAnswers?: number;
+	roundTo?: string;
 };
 
 /** Exactly one is set: the field that matches the person's side. */
@@ -90,7 +107,14 @@ export function askFor(side: Side, who = "they"): string {
 }
 
 export function termsOf(row: DecisionRow): PriceTerms {
-	return JSON.parse(row.terms_json ?? "{}") as PriceTerms;
+	const terms = JSON.parse(row.terms_json ?? "{}") as PriceTerms;
+	// Requests from before rules could be chosen were all MIDPOINT.
+	return { ...terms, rule: terms.rule ?? "MIDPOINT" };
+}
+
+/** How many numbers the person answering may send for this request. */
+export function maxAnswersOf(terms: PriceTerms): number {
+	return terms.maxAnswers ?? 1;
 }
 
 /** "Rent for the flat (utilities included)". */
@@ -179,7 +203,12 @@ export type PriceView = ReturnType<typeof priceView>;
  */
 export function priceView(row: DecisionRow, answers: AnswerRow[], caller: Caller, created?: { code: string; handoffMessage: string }) {
 	const terms = termsOf(row);
-	const yourSide = same(caller.email, row.starter_email) ? terms.starterSide : other(terms.starterSide);
+	const isStarter = same(caller.email, row.starter_email);
+	const yourSide = isStarter ? terms.starterSide : other(terms.starterSide);
+	const waiting = row.state === "WAITING";
+	// While it is open, the starter sees nothing that changes with a try: failed tries must not show, since
+	// counting them (or seeing who answered) would tell the starter how the other side's numbers went.
+	const shown = isStarter && waiting ? answers.filter((a) => a.role === "STARTER") : answers;
 	return {
 		name: `decisions/${row.id}`,
 		price: {
@@ -189,6 +218,8 @@ export function priceView(row: DecisionRow, answers: AnswerRow[], caller: Caller
 			...(terms.unit ? { unit: terms.unit } : {}),
 			answerBy: answerByOf(row),
 			rule: terms.rule,
+			...(terms.roundTo ? { roundTo: plainAmount(terms.roundTo, terms.currency) } : {}),
+			maxAnswers: maxAnswersOf(terms),
 			yourSide,
 			...(row.state === "AGREED" && row.agreed_minor !== null
 				? {
@@ -198,7 +229,9 @@ export function priceView(row: DecisionRow, answers: AnswerRow[], caller: Caller
 				: {}),
 		},
 		state: row.state as "WAITING" | "AGREED" | "NO_MATCH" | "EXPIRED",
-		participants: answers.map((a) => ({ displayName: a.author_name, role: a.role })),
+		// Only the person answering, while they still can: how many numbers they may still send.
+		...(!isStarter && waiting ? { remainingAttempts: Math.max(0, maxAnswersOf(terms) - row.attempts) } : {}),
+		participants: shown.map((a) => ({ displayName: a.author_name, role: a.role })),
 		...(created ? { code: created.code, handoffMessage: created.handoffMessage } : {}),
 		expireTime: row.expire_time,
 		createTime: row.create_time,
@@ -217,6 +250,10 @@ export function pricePreview(row: DecisionRow, caller: Caller) {
 		currencyCode: terms.currency,
 		...(terms.unit ? { unit: terms.unit } : {}),
 		rule: terms.rule,
+		...(terms.roundTo ? { roundTo: plainAmount(terms.roundTo, terms.currency) } : {}),
+		// The rule in plain words, for the person answering: what a deal costs them and what it reveals.
+		ruleText: ruleText(terms, other(terms.starterSide), firstName(row.starter_name) || "the other person"),
+		maxAnswers: maxAnswersOf(terms),
 		yourSide: same(caller.email, row.starter_email) ? terms.starterSide : other(terms.starterSide),
 	};
 }
@@ -231,6 +268,7 @@ export function notAMeeting(row: DecisionRow): string {
 }
 
 // ---- The message the starter forwards
+
 
 export function priceHandoffMessage(p: {
 	starterName: string;
@@ -251,13 +289,14 @@ export function priceHandoffMessage(p: {
 		youPay ? `You pay; ${who} receives.` : `${who} pays; you receive.`
 	}
 
-You each tell Neutra one number in private: ${
-		youPay
-			? `you the most you'd pay, ${who} the least they'd accept. If yours is at least theirs`
-			: `you the least you'd accept, ${who} the most they'd pay. If yours is at most theirs`
-	}, the price is halfway between them. If not, you both hear only "no deal" and neither learns the other's number. You have one answer, so give your real ${
-		youPay ? "maximum" : "minimum"
-	}, not an opening offer. A deal isn't a contract: you two confirm it yourselves.
+You each tell Neutra one number in private: ${youPay ? "you the most you'd pay" : "you the least you'd accept"}, ${who} ${askFor(t.starterSide)}. ${ruleText(
+		t,
+		youPay ? "PAYS" : "RECEIVES",
+		who,
+	)} If not, you both hear only "no deal" and neither learns the other's number. ${answersText(
+		maxAnswersOf(t),
+		youPay ? "PAYS" : "RECEIVES",
+	)} A deal isn't a contract: you two confirm it yourselves.
 
 To answer:
 1. Add Neutra to your AI assistant. In Claude it's in the connector directory: ${CLAUDE_DIRECTORY_URL}
@@ -302,19 +341,43 @@ export async function createPriceDecision(
 		}
 	}
 	const expire = deadline(request.price.answerBy, now);
+	const rule = request.price.rule ?? "MIDPOINT";
+	if (!(RULES as readonly string[]).includes(rule)) {
+		throw new ApiError("INVALID_ARGUMENT", `rule must be one of ${RULES.map((r) => `"${r}"`).join(", ")}; leave it out for "MIDPOINT".`);
+	}
+	const maxAnswers = request.price.maxAnswers ?? 1;
+	if (!Number.isInteger(maxAnswers) || maxAnswers < 1 || maxAnswers > MAX_PRICE_ANSWERS) {
+		throw new ApiError("INVALID_ARGUMENT", `maxAnswers must be a whole number from 1 to ${MAX_PRICE_ANSWERS}; leave it out for 1.`);
+	}
+	if (request.price.roundTo !== undefined && rule !== "MIDPOINT_ROUNDED") {
+		throw new ApiError("INVALID_ARGUMENT", 'roundTo applies only to rule "MIDPOINT_ROUNDED". Leave it out, or set that rule.');
+	}
+	// The step: as sent, or about 1% of the starter's number. Shown to both sides, so it is part of the terms.
+	const roundTo =
+		rule === "MIDPOINT_ROUNDED"
+			? request.price.roundTo !== undefined
+				? parseAmount(request.price.roundTo, currency)
+				: defaultStep(minor, currency)
+			: undefined;
 	const terms: PriceTerms = {
 		subject,
 		...(details ? { details } : {}),
 		currency,
 		...(unit ? { unit } : {}),
 		starterSide,
-		rule: "MIDPOINT",
+		rule: rule as Rule,
+		maxAnswers,
+		...(roundTo ? { roundTo } : {}),
 	};
 	const receivedLimit = limitText(starterSide, minor, terms);
+	// Said to the starter, not stored: how the rule works for them, and whether several answers let the other side
+	// move their number between tries.
+	const warning = starterCaution(terms.rule, maxAnswers, starterSide);
+	const caution = `${ruleText(terms, starterSide, "the other side")}${warning ? ` ${warning}` : ""}`;
 	await checkCreateDecision(env, caller.email, now);
 	if (request.validateOnly) {
 		// Nothing stored and nothing counted: this is only for reading the number back to the person.
-		return { validateOnly: true as const, receivedLimit };
+		return { validateOnly: true as const, receivedLimit, caution };
 	}
 
 	const id = randomId(26);
@@ -392,7 +455,11 @@ export async function createPriceDecision(
 		terms,
 	});
 	// The code in its combined form, the one thing the other side needs.
-	return { decision: priceView(row, [answer], caller, { code: combinedCode(id, code), handoffMessage }), receivedLimit };
+	return {
+		decision: priceView(row, [answer], caller, { code: combinedCode(id, code), handoffMessage }),
+		receivedLimit,
+		caution,
+	};
 }
 
 // ---- Answering
@@ -430,8 +497,13 @@ export async function createPriceAnswer(
 			`In this request your person ${side === "PAYS" ? "pays" : "receives the money"}, so send only answer.price.${field}: ${askFor(side)}. Not counted.`,
 		);
 	}
+	// The code binds to the first person who answers with it, so their later tries can't come from someone else.
+	if (loaded.responder_email && !same(loaded.responder_email, caller.email)) {
+		throw new ApiError("PERMISSION_DENIED", "This code is already used by someone else.");
+	}
+	const maxAnswers = maxAnswersOf(terms);
 	const { row } = await refresh(env, loaded, now);
-	if (row.state !== "WAITING" || row.code_used || row.attempts > 0) {
+	if (row.state !== "WAITING" || row.code_used || row.attempts >= maxAnswers) {
 		throw new ApiError(
 			"FAILED_PRECONDITION",
 			row.state === "EXPIRED"
@@ -452,7 +524,7 @@ export async function createPriceAnswer(
 		notCounted(error);
 	}
 	await checkCreateAnswer(env, caller.email, row.starter_email, row.id, now);
-	await checkPriceAnswer(env, caller.email, now);
+	await checkPriceAnswer(env, caller.email, row.stats_ref, now);
 	const receivedLimit = limitText(side, minor, terms);
 	if (request.validateOnly) {
 		return { validateOnly: true as const, receivedLimit };
@@ -466,9 +538,12 @@ export async function createPriceAnswer(
 		throw new ApiError("FAILED_PRECONDITION", "This request can't be answered any more. Ask the person who sent it to start a new one.");
 	}
 	const [minimum, maximum] = side === "PAYS" ? [starterLimit, minor] : [minor, starterLimit];
-	const outcome = midpoint(minimum, maximum, terms.currency);
-	const state = outcome.deal ? "AGREED" : "NO_MATCH";
-	const agreed = outcome.deal ? outcome.price : null;
+	const agreed = dealPrice(terms, { minimum, maximum });
+	const attempt = row.attempts + 1;
+	// No deal with tries left: the request stays open for this person, with the starter's sealed limit. The
+	// number just sent is not kept, as always. Only a deal or the last try settles it.
+	const settles = agreed !== null || attempt >= maxAnswers;
+	const state = agreed !== null ? "AGREED" : settles ? "NO_MATCH" : "WAITING";
 	const answerId = randomId(26);
 	const claimId = randomId(16);
 	const owned = "EXISTS (SELECT 1 FROM decisions WHERE id = ? AND claim_id = ?)";
@@ -477,19 +552,39 @@ export async function createPriceAnswer(
 	const dayAgo = iso(now - 24 * 60 * 60 * 1000);
 	const detail = {
 		kind: "price",
-		outcome: outcome.deal ? "agreed" : "no_match",
+		attempt,
+		outcome: agreed !== null ? "agreed" : settles ? "no_match" : "retry",
 		minutesSinceStart: Math.round((now - Date.parse(row.create_time)) / 60_000),
 	};
 
-	// Settles in one go: the one answer, the result, the starter's sealed limit gone, and the event that counts
-	// toward the daily limit. Nothing outside Neutra happens before the result, so no in-between state is needed.
-	// The guard lets only one answer in, and re-counts today's price answers inside the same write, so parallel
-	// answers to different requests can't get past the daily limit either.
-	const settled = await env.DB.batch([
+	// One write per try: the result, the answer, and the event that counts toward the daily limit. Nothing outside
+	// Neutra happens before the result, so no in-between state is needed. The guard lets one try in at a time (the
+	// try count must still be what was read), only from the bound person, and re-counts today's price requests
+	// inside the same write, so parallel answers to different requests can't get past the daily limit either.
+	const result = await env.DB.batch([
 		env.DB.prepare(
-			`UPDATE decisions SET state = ?, agreed_minor = ?, limit_sealed = NULL, responder_email = ?, code_used = 1, attempts = attempts + 1, claim_id = ?, update_time = ?
-			 WHERE id = ? AND state = 'WAITING' AND code_used = 0 AND attempts = 0 AND (${PRICE_ANSWERS_TODAY}) < ?`,
-		).bind(state, agreed, caller.email, claimId, iso(now), row.id, person, dayAgo, LIMITS.priceAnswersPerDay),
+			`UPDATE decisions SET state = ?, agreed_minor = ?, limit_sealed = CASE WHEN ? THEN NULL ELSE limit_sealed END, responder_email = ?,
+			 code_used = ?, attempts = attempts + 1, claim_id = ?, update_time = ?
+			 WHERE id = ? AND state = 'WAITING' AND code_used = 0 AND attempts = ? AND (responder_email IS NULL OR lower(responder_email) = lower(?))
+			   AND (${PRICE_REQUESTS_TODAY}) < ?`,
+		).bind(
+			state,
+			agreed,
+			settles ? 1 : 0,
+			caller.email,
+			settles ? 1 : 0,
+			claimId,
+			iso(now),
+			row.id,
+			row.attempts,
+			caller.email,
+			person,
+			dayAgo,
+			row.stats_ref,
+			LIMITS.priceAnswersPerDay,
+		),
+		// One answer row for the person answering, replaced on each try; it never holds a number.
+		env.DB.prepare(`DELETE FROM answers WHERE decision_id = ? AND role = 'RESPONDER' AND ${owned}`).bind(row.id, row.id, claimId),
 		env.DB.prepare(
 			`INSERT INTO answers (id, decision_id, author_email, author_name, role, windows_json, time_zone, create_time) SELECT ?, ?, ?, ?, 'RESPONDER', '[]', NULL, ? WHERE ${owned}`,
 		).bind(answerId, row.id, caller.email, caller.name, iso(now), row.id, claimId),
@@ -498,29 +593,34 @@ export async function createPriceAnswer(
 		).bind(row.stats_ref, caller.client ?? "unknown", person, JSON.stringify(detail), iso(now), row.id, claimId),
 		env.DB.prepare("UPDATE decisions SET claim_id = NULL WHERE id = ? AND claim_id = ?").bind(row.id, claimId),
 	]);
-	if (settled[0].meta.changes !== 1) {
-		// Either someone answered first, or this person reached the daily limit in the meantime.
-		const current = await env.DB.prepare("SELECT state FROM decisions WHERE id = ?").bind(row.id).first<{ state: string }>();
-		if (current?.state === "WAITING") priceAnswerLimit();
-		throw new ApiError("FAILED_PRECONDITION", "This request has already been answered.");
+	if (result[0].meta.changes !== 1) {
+		// Another try got in first, someone else answered, or this person reached the daily limit in the meantime.
+		const current = await env.DB.prepare("SELECT state, attempts FROM decisions WHERE id = ?").bind(row.id).first<{ state: string; attempts: number }>();
+		if (current?.state === "WAITING" && current.attempts === row.attempts) priceAnswerLimit();
+		throw new ApiError(
+			"FAILED_PRECONDITION",
+			current?.state === "WAITING" ? "Another answer to this request was just sent. Check get_decision and try again." : "This request has already been answered.",
+		);
 	}
 	const next: DecisionRow = {
 		...row,
 		state,
 		agreed_minor: agreed,
-		limit_sealed: null,
+		limit_sealed: settles ? null : row.limit_sealed,
 		responder_email: caller.email,
-		code_used: 1,
-		attempts: 1,
+		code_used: settles ? 1 : 0,
+		attempts: attempt,
 		update_time: iso(now),
 	};
 	const answers = await answersOf(env, row.id);
-	// The result email goes out now. If it fails, the result stands and the maintenance job tries again.
-	try {
-		await sendEmail(env, await priceNotice(env, next));
-		await env.DB.prepare("UPDATE decisions SET notified = 1 WHERE id = ?").bind(row.id).run();
-	} catch (error) {
-		console.error("result email failed", row.id, error);
+	// The result email goes out once it is settled. If it fails, the result stands and the maintenance job tries again.
+	if (settles) {
+		try {
+			await sendEmail(env, await priceNotice(env, next));
+			await env.DB.prepare("UPDATE decisions SET notified = 1 WHERE id = ?").bind(row.id).run();
+		} catch (error) {
+			console.error("result email failed", row.id, error);
+		}
 	}
 	// The limit just sent isn't returned: limits never come back once submitted, not even your own.
 	return { decision: priceView(next, answers, caller) };
@@ -538,9 +638,11 @@ export async function priceNotice(env: Env, d: NoticeRow): Promise<{ to: string;
 		return {
 			to: d.starter_email,
 			subject: "Your Neutra price request expired",
+			// Neutral on purpose: with several answers allowed, the other side may have tried without a deal, and
+			// the starter must not learn that from this email.
 			body: `Hi ${starter},
 
-Nobody answered your Neutra price request about ${terms.subject} by ${formatDay(Date.parse(d.expire_time))}.
+Your Neutra price request about ${terms.subject} ended on ${formatDay(Date.parse(d.expire_time))} without a deal.
 
 If you still want to agree on a price, ask your assistant to start a new request and send the message again.
 
@@ -558,9 +660,10 @@ Neutra`,
 		return {
 			to,
 			subject: `Deal: ${terms.subject}`,
+			// Who can work out whose number is in dealText: halfway reveals both, lowest or highest only one.
 			body: `${hi}
 
-You have a deal through Neutra: ${subjectText(terms)} at ${formatAmount(d.agreed_minor, terms.currency, terms.unit)}. That's halfway between the two numbers you each gave, so each of you can now work out the other's.
+You have a deal through Neutra: ${subjectText(terms)} at ${formatAmount(d.agreed_minor, terms.currency, terms.unit)} (${dealText({ ...terms, rule: terms.rule ?? "MIDPOINT" })}).
 
 This is an agreement in principle only, not a contract, and no money has moved. Settle the details directly with each other:
 ${d.starter_name}: ${d.starter_email}

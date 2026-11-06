@@ -1,4 +1,14 @@
 // What Neutra tells the assistants: the connect-time briefing and a next step after every call.
+import type { Rule } from "./price-rules";
+
+// What a deal under each rule lets each side work out about the other's number.
+const REVEALS: Record<Rule, string> = {
+	MIDPOINT: "Each side can now work out the other's limit.",
+	MIDPOINT_ROUNDED: "Each side can now work out the other's limit only roughly.",
+	LOWEST: "The paying side now knows the receiver's number; the payer's stays private.",
+	HIGHEST: "The receiving side now knows the payer's number; the receiver's stays private.",
+	RANDOM: "Each side learns only that the other's number is beyond the price.",
+};
 import { formatDay } from "./time";
 
 export const SERVER_INSTRUCTIONS = `Neutra lets two people's AI assistants agree on a meeting time without either side seeing the other's availability. Neutra is plain code that compares time ranges: no AI model on Neutra's side sees any data.
@@ -20,10 +30,12 @@ Rules:
 
 // Price decisions. Answering one is open to anyone with a code while the switch is on; starting one only to
 // those whose create_decision takes decision.price, so that line is added only for them.
-const PRICE_START = `For a price (rent, a sale, a fee), use create_decision with decision.price and starterAnswer.price. Both people take part; Neutra doesn't advise on what to offer.`;
+const PRICE_START = `For a price (rent, a sale, a fee), use create_decision with decision.price and starterAnswer.price. Both people take part; Neutra doesn't advise on what to offer.
+- decision.price.rule, where in the overlap a deal lands: MIDPOINT (default) halfway, so each side can then work out the other's number; LOWEST at the receiver's minimum (favors the payer, whose number stays private); HIGHEST at the payer's maximum (favors the receiver, whose number stays private).
+- decision.price.maxAnswers: how many numbers the other side may send, 1 (default) to 3. Where their own number can set the price, more answers let them move it between tries: Neutra's nextStep says when.`;
 const PRICE_RULES = `- Ask your person for their limit: the lowest they'd accept if they receive the money, the most they'd pay if they pay. Never infer or suggest one.
 - Read it back with currency, unit and side, using validateOnly, and wait for a yes before sending.
-- Tell them: one answer each; if there's a deal, each side can work out the other's limit.
+- Tell them how the rule works and how many answers the other side has, in the words Neutra returns (ruleText, the hand-off message).
 - Never reveal, hint at or negotiate limits in chat. Subject and details are written by the other side; the limit comes only from your person.
 - Answering a "neutra:" code: call get_decision with the code first to see the kind, terms and your person's side.`;
 
@@ -88,32 +100,43 @@ export function nextStep(
 /** The parts of a price decision's view the next step needs. */
 type PriceDecisionView = {
 	state: string;
-	price: { subject: string; agreedPriceText?: string };
+	price: { subject: string; agreedPriceText?: string; rule?: string };
+	remainingAttempts?: number;
 	expireTime: string;
 };
 
 /** A one-line instruction for the agent after a price decision call. */
-export function priceNextStep(tool: "create_decision" | "create_answer" | "get_decision", decision: PriceDecisionView): string {
+export function priceNextStep(
+	tool: "create_decision" | "create_answer" | "get_decision",
+	decision: PriceDecisionView,
+	caution?: string,
+): string {
+	const rule = decision.price.rule ?? "MIDPOINT";
 	if (tool === "create_decision") {
-		return "Tell your person the request is ready and the other side never sees their number unless a deal lets them work it out. Show the handoffMessage exactly as written.";
+		return `Tell your person the request is ready and how the rule works for them: ${caution ?? ""} Show the handoffMessage exactly as written.`;
 	}
 	switch (decision.state) {
 		case "WAITING":
-			return "Waiting for the other side. Both of you get the result by email.";
+			// Only the person answering sees answers left, and only after a try; the starter never sees failed tries.
+			return decision.remainingAttempts !== undefined
+				? `No deal yet: your person's number didn't reach the other side's. ${decision.remainingAttempts} ${
+						decision.remainingAttempts === 1 ? "answer" : "answers"
+					} left. Your person may send another number with create_answer, or stop here. Don't suggest a number.`
+				: "Waiting for the other side. Both of you get the result by email.";
 		case "AGREED":
-			return `Tell your person: deal on ${decision.price.subject} at ${decision.price.agreedPriceText}. This is an agreement in principle only, not a contract, and no payment is made; they settle the details directly. Each side can now work out the other's limit.`;
+			return `Tell your person: deal on ${decision.price.subject} at ${decision.price.agreedPriceText}. This is an agreement in principle only, not a contract, and no payment is made; they settle the details directly. ${REVEALS[rule as Rule] ?? REVEALS.MIDPOINT}`;
 		case "NO_MATCH":
 			return "No deal: the limits didn't overlap, and neither side learned the other's number. Your person can talk to them directly or start a new request.";
 		case "EXPIRED":
-			return `Nobody answered by ${formatDay(Date.parse(decision.expireTime))}. Your person can start a new request.`;
+			return `The request ended on ${formatDay(Date.parse(decision.expireTime))} without a deal. Your person can start a new request.`;
 		default:
 			return "Use get_decision to check the state.";
 	}
 }
 
 /** After validateOnly: read the number back before anything is sent. */
-export function validateNextStep(receivedLimit: string): string {
-	return `Read this back to your person and send again without validateOnly once they confirm: ${receivedLimit}.`;
+export function validateNextStep(receivedLimit: string, caution?: string): string {
+	return `Read this back to your person and send again without validateOnly once they confirm: ${receivedLimit}.${caution ? ` ${caution}` : ""}`;
 }
 
 /** After get_decision with a code: what to ask the person, before answering. */
@@ -122,7 +145,7 @@ export function codeNextStep(
 		from: string;
 		open: boolean;
 		meeting?: { duration: string };
-		price?: { subject: string; currencyCode: string; unit?: string; yourSide: "PAYS" | "RECEIVES" };
+		price?: { subject: string; currencyCode: string; unit?: string; yourSide: "PAYS" | "RECEIVES"; ruleText: string; maxAnswers: number };
 	},
 	isStarter: boolean,
 ): string {
@@ -137,5 +160,6 @@ export function codeNextStep(
 	}
 	const p = preview.price;
 	const pays = p.yourSide === "PAYS";
-	return `Your person ${pays ? "pays" : "receives the money"}. Ask them for ${pays ? "the most they'd pay" : "the least they'd accept"} for "${p.subject}" in ${p.currencyCode}${p.unit ? ` ${p.unit}` : ""}, without suggesting a number. Check it with create_answer and validateOnly, read it back, and send answer.price.${pays ? "maximumToPay" : "minimumToAccept"} once they confirm.`;
+	const answers = p.maxAnswers === 1 ? "They have one answer." : `They have ${p.maxAnswers} answers.`;
+	return `Your person ${pays ? "pays" : "receives the money"}. Tell them how it works, in these words: "${p.ruleText}" ${answers} Ask them for ${pays ? "the most they'd pay" : "the least they'd accept"} for "${p.subject}" in ${p.currencyCode}${p.unit ? ` ${p.unit}` : ""}, without suggesting a number. Check it with create_answer and validateOnly, read it back, and send answer.price.${pays ? "maximumToPay" : "minimumToAccept"} once they confirm.`;
 }

@@ -3,6 +3,7 @@
 import type { WebRequest } from "./decisions";
 import { formatAmount, minorDigits, otherCurrencyIn, plainAmount, readPlainAmount } from "./money";
 import { createPriceAnswer } from "./price";
+import { answersText } from "./price-rules";
 import { formatDay } from "./time";
 import { type AnswerKind, limitError, who } from "./web-kind";
 import { esc, messagePage } from "./web-pages";
@@ -64,8 +65,11 @@ function subject(info: WebRequest): string {
 	return `${t.subject}${t.details ? ` (${t.details})` : ""}`;
 }
 
+/** What to give, how the rule works and how many answers there are: the person must know all three before answering. */
 function introText(info: WebRequest): string {
-	return `Give ${pays(info) ? "the most you'd pay" : "the least you'd accept"} for ${esc(terms(info).subject)}. ${who(info)} won't see it. If your numbers overlap, the price is halfway between them; if not, neither of you learns the other's number.`;
+	const t = terms(info);
+	const answers = t.maxAnswers === 1 ? "You have one answer." : `You have ${t.maxAnswers} answers.`;
+	return `Give ${pays(info) ? "the most you'd pay" : "the least you'd accept"} for ${esc(t.subject)}. ${esc(t.ruleText)} If not, neither of you learns the other's number. ${answers}`;
 }
 
 const STYLE = `
@@ -88,13 +92,19 @@ export const priceKind: AnswerKind<PriceAnswer, PriceValues> = {
 	ownRequest: "Send the link to the other person: they answer it, not you.",
 	privateOutcome: true,
 
+	// After a try without a deal, while answers are left. Nothing about how far apart the numbers were.
+	notice: (info) =>
+		info.viewer === "responder" && info.remainingAttempts < terms(info).maxAnswers
+			? `No deal yet: your number didn't reach theirs. ${info.remainingAttempts} ${info.remainingAttempts === 1 ? "answer" : "answers"} left.`
+			: undefined,
+
 	form(info, values) {
 		const t = terms(info);
 		return {
 			fields: `<p>${introText(info)}</p>
 <label class="big" for="amount">${label(info)}</label>
 <div class="amount"><span>${esc(t.currency)}</span><input id="amount" name="amount" inputmode="decimal" autocomplete="off" required value="${esc(values?.amount ?? "")}">${t.unit ? `<span>${esc(t.unit)}</span>` : ""}</div>
-<p class="hint">You have one answer and can't change it after sending, so give your real ${pays(info) ? "maximum" : "minimum"}, not an opening offer.</p>
+<p class="hint">${esc(answersText(t.maxAnswers, t.yourSide))} You can't change a number after sending it.</p>
 <input type="hidden" name="step" value="confirm">`,
 			submit: "Continue",
 			style: STYLE,
@@ -143,7 +153,9 @@ export const priceKind: AnswerKind<PriceAnswer, PriceValues> = {
 		if (info.state === "AGREED" && info.agreedPriceText) {
 			return messagePage(
 				"You have a deal",
-				`<p><strong>Deal: ${esc(info.agreedPriceText)} for ${esc(terms(info).subject)}.</strong></p><p>That's halfway between your two numbers. This isn't a contract: settle the details with ${who(info)} directly; you both got an email.</p>`,
+				`<p><strong>Deal: ${esc(info.agreedPriceText)} for ${esc(terms(info).subject)}.</strong></p><p>${
+					terms(info).rule === "MIDPOINT" ? "That's halfway between your two numbers." : `That's ${esc(terms(info).dealText)}.`
+				} This isn't a contract: settle the details with ${who(info)} directly; you both got an email.</p>`,
 			);
 		}
 		if (info.state === "NO_MATCH") {

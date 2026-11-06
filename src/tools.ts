@@ -66,6 +66,23 @@ export const CREATE_DECISION_WITH_PRICE = {
 						currencyCode: z.string().describe('ISO 4217 code, e.g. "CHF". Both answers are in this currency.'),
 						unit: z.string().optional().describe('Up to 30 characters, e.g. "per month"'),
 						answerBy: z.string().optional().describe('Last day to answer, "YYYY-MM-DD", 1 to 14 days ahead. Leave out for 14 days.'),
+						rule: z
+							.enum(["MIDPOINT", "LOWEST", "HIGHEST", "MIDPOINT_ROUNDED", "RANDOM"])
+							.optional()
+							.describe(
+								"Where in the overlap a deal lands. MIDPOINT (default): halfway, so each side can then work out the other's number. LOWEST: at the receiver's minimum (favors the payer, whose number stays private). HIGHEST: at the payer's maximum (favors the receiver, whose number stays private). MIDPOINT_ROUNDED: halfway, rounded to roundTo, so each side learns the other's number only roughly. RANDOM: a random point in the overlap, so each side learns only that the other's number is beyond the price.",
+							),
+						roundTo: z
+							.string()
+							.optional()
+							.describe('MIDPOINT_ROUNDED only: the step, digits as a string in the currency, e.g. "50". Leave out for about 1% of your person\'s number.'),
+						maxAnswers: z
+							.number()
+							.int()
+							.min(1)
+							.max(3)
+							.optional()
+							.describe("How many numbers the other side may send, 1 (default) to 3. Where their own number can set the price, more answers let them move it between tries."),
 					})
 					.optional()
 					.describe(
@@ -79,7 +96,7 @@ export const CREATE_DECISION_WITH_PRICE = {
 				price: z
 					.object({ minimumToAccept: MinimumToAccept, maximumToPay: MaximumToPay })
 					.optional()
-					.describe("With decision.price: exactly one of minimumToAccept or maximumToPay. Never shown to anyone."),
+					.describe("With decision.price: exactly one of minimumToAccept or maximumToPay, your person's true limit. Never shown to anyone, except as the price under LOWEST or HIGHEST."),
 			})
 			.describe("Matching the decision: meeting with decision.meeting, price with decision.price."),
 		validateOnly: ValidateOnly.describe(

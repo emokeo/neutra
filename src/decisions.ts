@@ -6,6 +6,7 @@ import { formatDay, formatRange, isValidTimeZone, parseTimestamp } from "./time"
 import { CLAUDE_DIRECTORY_URL } from "./links";
 import { durationText } from "./web-form";
 import { notAMeeting, pricePreview, priceView, termsOf } from "./price";
+import { dealText, type Rule } from "./price-rules";
 
 export type Caller = { email: string; name: string; client?: string };
 export type Interval = { startTime: string; endTime: string };
@@ -478,17 +479,19 @@ export async function requestPreview(env: Env, caller: Caller, codeText: string)
 	}
 	const now = Date.now();
 	const { row } = await refresh(env, loaded, now);
+	// For the starter, open means only "not settled": whether someone has tried must not show (see priceView).
+	const isStarter = same(caller.email, row.starter_email);
 	const open =
 		(row.state === "WAITING" || row.state === "MATCHING") &&
 		!(row.offered_until && Date.parse(row.offered_until) < now) &&
-		(!row.responder_email || same(row.responder_email, caller.email));
+		(isStarter || !row.responder_email || same(row.responder_email, caller.email));
 	const preview = {
 		from: firstName(row.starter_name) || "Someone",
 		answerBy: row.expire_time.slice(0, 10),
 		open,
 		...(row.kind === "price" ? { price: pricePreview(row, caller) } : { meeting: { duration: `${row.duration_seconds}s` } }),
 	};
-	return { preview, isStarter: same(caller.email, row.starter_email) };
+	return { preview, isStarter };
 }
 
 export async function deleteDecision(env: Env, caller: Caller, name: string): Promise<void> {
@@ -751,7 +754,18 @@ export type WebRequest = {
 	// The invited time, in the responder's time zone. Only for the responder.
 	scheduledTimeLocal?: string;
 	// Price requests: the terms from the hand-off message, with the side of the person answering.
-	price?: { subject: string; details?: string; currency: string; unit?: string; yourSide: "PAYS" | "RECEIVES" };
+	price?: {
+		subject: string;
+		details?: string;
+		currency: string;
+		unit?: string;
+		yourSide: "PAYS" | "RECEIVES";
+		rule: Rule;
+		ruleText: string;
+		// How a deal's price came about, for the result page: "halfway between your numbers".
+		dealText: string;
+		maxAnswers: number;
+	};
 	// The agreed price, ready to show. Only for the responder.
 	agreedPriceText?: string;
 };
@@ -782,6 +796,7 @@ export async function webRequest(env: Env, id: string, code: string, viewerEmail
 		);
 	}
 	const price = row.kind === "price" ? priceView(row, [], { email: "", name: "" }).price : null;
+	const preview = row.kind === "price" ? pricePreview(row, { email: "", name: "" }) : null;
 	return {
 		kind: row.kind === "price" ? "price" : "meeting",
 		starterFirstName: firstName(row.starter_name) || "Someone",
@@ -789,7 +804,7 @@ export async function webRequest(env: Env, id: string, code: string, viewerEmail
 		answerBy: Date.parse(row.expire_time),
 		state: (row.state === "MATCHING" ? "WAITING" : row.state) as State,
 		viewer,
-		remainingAttempts: Math.max(0, MAX_ANSWERS - row.attempts),
+		remainingAttempts: Math.max(0, (price ? price.maxAnswers : MAX_ANSWERS) - row.attempts),
 		timesPassed: !!row.offered_until && Date.parse(row.offered_until) < now,
 		pending: row.state === "MATCHING",
 		...(scheduledTimeLocal ? { scheduledTimeLocal } : {}),
@@ -802,6 +817,10 @@ export async function webRequest(env: Env, id: string, code: string, viewerEmail
 						currency: price.currencyCode,
 						...(price.unit ? { unit: price.unit } : {}),
 						yourSide: termsOf(row).starterSide === "PAYS" ? ("RECEIVES" as const) : ("PAYS" as const),
+						rule: price.rule,
+						ruleText: preview?.ruleText ?? "",
+						dealText: dealText(termsOf(row)),
+						maxAnswers: price.maxAnswers,
 					},
 					...(viewer === "responder" && price.agreedPriceText ? { agreedPriceText: price.agreedPriceText } : {}),
 				}

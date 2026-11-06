@@ -38,7 +38,9 @@ When the health check says the key is refused or missing a permission:
 
 Switching back to `"off"` while price requests are open: they can't be answered any more and expire after their deadline (the starter gets the usual "nobody answered" email). Nothing else is needed.
 
-Check how they're used: D1 Console, `SELECT state, COUNT(*) FROM decisions WHERE kind = 'price' GROUP BY state`. Amounts are never in the events or logs; the agreed price is kept 7 days, then deleted with the decision.
+Rules and several answers are chosen per request by the starter (`decision.price.rule`, `maxAnswers`); nothing to configure. `RANDOM` draws with `crypto.getRandomValues`.
+
+Check how they're used: D1 Console, `SELECT state, json_extract(terms_json, '$.rule') AS rule, COUNT(*) FROM decisions WHERE kind = 'price' GROUP BY 1, 2`. Amounts are never in the events or logs; the agreed price is kept 7 days, then deleted with the decision.
 
 ## Numbers
 The anonymous usage events identify people by a scrambled ID derived from `COOKIE_ENCRYPTION_KEY`. Replacing that key makes returning people count as new in the stats.

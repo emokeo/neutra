@@ -41,8 +41,12 @@ export async function startDecision(
 			validateOnly: request.validateOnly,
 		});
 		// neutra.v1.CreateDecisionResponse: with validateOnly there is no decision yet.
-		if (result.validateOnly) return { receivedLimit: result.receivedLimit, nextStep: validateNextStep(result.receivedLimit) };
-		return { decision: result.decision, receivedLimit: result.receivedLimit, nextStep: priceNextStep("create_decision", result.decision) };
+		if (result.validateOnly) return { receivedLimit: result.receivedLimit, nextStep: validateNextStep(result.receivedLimit, result.caution) };
+		return {
+			decision: result.decision,
+			receivedLimit: result.receivedLimit,
+			nextStep: priceNextStep("create_decision", result.decision, result.caution),
+		};
 	}
 	if (!starterAnswer.meeting || starterAnswer.price) {
 		throw new ApiError(

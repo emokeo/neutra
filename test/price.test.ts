@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { type ApiError, createAnswer, createDecision, deleteDecision, getAnswer, getDecision, requestTerms } from "../src/decisions";
+import { type ApiError, createAnswer, createDecision, deleteDecision, getAnswer, getDecision, requestPreview } from "../src/decisions";
 import { codeNextStep, priceNextStep, SERVER_INSTRUCTIONS, serverInstructions } from "../src/guidance";
 import { runMaintenance } from "../src/maintenance";
 import { canStartPrice, createPriceAnswer, createPriceDecision } from "../src/price";
@@ -38,13 +38,21 @@ afterEach(() => {
 	vi.unstubAllGlobals();
 });
 
-const rent = { subject: "Rent for the flat at Seestrasse 12", details: "utilities included", currency: "chf", unit: "per month" };
+const rent = { subject: "Rent for the flat at Seestrasse 12", details: "utilities included", currencyCode: "chf", unit: "per month" };
 
 /** Anna lets the flat: she receives the money and accepts at least 1700 a month. */
 async function annaLets(minimum: string | number = "1700") {
 	const result = await createPriceDecision(env, anna, { price: rent, starterAnswer: { minimumToAccept: minimum } });
 	if (result.validateOnly) throw new Error("expected a decision");
-	return { ...result, combined: `neutra:${result.name.split("/")[1]}.${result.code}` };
+	// decision.code is the combined form, "neutra:<id>.<code>".
+	const combined = result.decision.code as string;
+	return { ...result, name: result.decision.name, combined, secret: combined.split(".")[1] };
+}
+
+/** "neutra:<id>.<code>" for a decision started directly. */
+function codeOf(result: Awaited<ReturnType<typeof createPriceDecision>>): string {
+	if (result.validateOnly) throw new Error("expected a decision");
+	return result.decision.code as string;
 }
 
 async function rejects(promise: Promise<unknown>, code: ApiError["code"], text?: string) {
@@ -59,13 +67,11 @@ async function rejects(promise: Promise<unknown>, code: ApiError["code"], text?:
 
 const row = () => db.db.prepare("SELECT * FROM decisions").get() as Record<string, unknown>;
 
-describe("create_price_decision", () => {
+describe("starting a price decision", () => {
 	it("stores the terms, seals the limit and returns a hand-off message", async () => {
 		const d = await annaLets("1850");
 		expect(d.name).toMatch(/^decisions\/[a-z][a-z2-7]{25}$/);
-		expect(d.receivedLimit).toBe(
-			'the least your person would accept: CHF 1,850 per month for "Rent for the flat at Seestrasse 12 (utilities included)", as the side that receives the money',
-		);
+		expect(d.receivedLimit).toBe('CHF 1,850 per month, the least you\'d accept for "Rent for the flat at Seestrasse 12 (utilities included)"');
 		const stored = row();
 		expect(stored.kind).toBe("price");
 		expect(JSON.parse(stored.terms_json as string)).toEqual({
@@ -85,44 +91,60 @@ describe("create_price_decision", () => {
 
 	it("shows no amount in the view", async () => {
 		const d = await annaLets("1850");
-		expect(d.decision).toMatchObject({ kind: "PRICE", state: "WAITING", price: { currency: "CHF", rule: "MIDPOINT", yourSide: "RECEIVES" } });
+		const id = d.name.split("/")[1];
+		// neutra.v1.Decision: every price field inside price, the rest as for meetings.
+		expect(d.decision).toEqual({
+			name: d.name,
+			price: {
+				subject: rent.subject,
+				details: rent.details,
+				currencyCode: "CHF",
+				unit: "per month",
+				answerBy: "2026-11-17",
+				rule: "MIDPOINT",
+				yourSide: "RECEIVES",
+			},
+			state: "WAITING",
+			participants: [{ displayName: "Anna Muster", role: "STARTER" }],
+			code: `neutra:${id}.${d.secret}`,
+			handoffMessage: expect.stringContaining("agree on a price"),
+			expireTime: "2026-11-17T08:00:00.000Z",
+			createTime: "2026-11-03T08:00:00.000Z",
+		});
 		expect(JSON.stringify(d.decision)).not.toContain("1850");
-		expect(d.decision).not.toHaveProperty("agreedPrice");
 	});
 
 	it("writes the hand-off message for the paying side", async () => {
 		const d = await annaLets();
 		const id = d.name.split("/")[1];
-		expect(d.handoffMessage).toBe(`Anna wants to agree on a price with you through Neutra (neutra.example.dev): Rent for the flat at Seestrasse 12 (utilities included), in CHF per month. You pay; Anna receives.
+		expect(d.decision.handoffMessage).toBe(`Anna wants to agree on a price with you through Neutra (neutra.example.dev): Rent for the flat at Seestrasse 12 (utilities included), in CHF per month. You pay; Anna receives.
 
 You each tell Neutra one number in private: you the most you'd pay, Anna the least they'd accept. If yours is at least theirs, the price is halfway between them. If not, you both hear only "no deal" and neither learns the other's number. You have one answer, so give your real maximum, not an opening offer. A deal isn't a contract: you two confirm it yourselves.
 
 To answer:
 1. Add Neutra to your AI assistant. In Claude it's in the connector directory: https://claude.ai/directory/connectors/neutra
 Other assistants: add https://neutra.example.dev/mcp as a custom connector. Steps: https://neutra.example.dev/r/${id}
-2. Tell your assistant: "Answer Neutra request neutra:${id}.${d.code}. The most I'd pay is CHF … per month."
+2. Tell your assistant: "Answer Neutra request neutra:${id}.${d.secret}. The most I'd pay is CHF … per month."
 
-No AI assistant? Answer in your browser instead: https://neutra.example.dev/a/${id}.${d.code}
+No AI assistant? Answer in your browser instead: https://neutra.example.dev/a/${id}.${d.secret}
 
 Open until Tue 17 Nov.`);
 	});
 
 	it("writes the mirror message when the starter pays", async () => {
-		const d = await createPriceDecision(env, anna, { price: { subject: "Old bike", currency: "EUR" }, starterAnswer: { maximumToPay: 120 } });
+		const d = await createPriceDecision(env, anna, { price: { subject: "Old bike", currencyCode: "EUR" }, starterAnswer: { maximumToPay: "120" } });
 		if (d.validateOnly) throw new Error("expected a decision");
-		expect(d.handoffMessage).toContain("Old bike, in EUR. Anna pays; you receive.");
-		expect(d.handoffMessage).toContain("you the least you'd accept, Anna the most they'd pay. If yours is at most theirs");
-		expect(d.handoffMessage).toContain("give your real minimum");
-		expect(d.handoffMessage).toContain(`The least I'd accept is EUR ….`);
+		const message = d.decision.handoffMessage as string;
+		expect(message).toContain("Old bike, in EUR. Anna pays; you receive.");
+		expect(message).toContain("you the least you'd accept, Anna the most they'd pay. If yours is at most theirs");
+		expect(message).toContain("give your real minimum");
+		expect(message).toContain(`The least I'd accept is EUR ….`);
+		expect(d.receivedLimit).toBe('EUR 120, the most you\'d pay for "Old bike"');
 	});
 
 	it("with validateOnly, reads the limit back and stores nothing", async () => {
 		const result = await createPriceDecision(env, anna, { price: rent, starterAnswer: { minimumToAccept: "1850.5" }, validateOnly: true });
-		expect(result).toMatchObject({
-			validateOnly: true,
-			receivedLimit: expect.stringContaining("CHF 1,850.50 per month"),
-			terms: { currency: "CHF", starterSide: "RECEIVES", answerBy: "2026-11-17" },
-		});
+		expect(result).toEqual({ validateOnly: true, receivedLimit: 'CHF 1,850.50 per month, the least you\'d accept for "Rent for the flat at Seestrasse 12 (utilities included)"' });
 		expect((db.db.prepare("SELECT COUNT(*) AS n FROM decisions").get() as { n: number }).n).toBe(0);
 		expect((db.db.prepare("SELECT COUNT(*) AS n FROM events").get() as { n: number }).n).toBe(0);
 	});
@@ -133,7 +155,7 @@ Open until Tue 17 Nov.`);
 		await rejects(start({ subject: "ab" }), "INVALID_ARGUMENT", "3 to 120 characters");
 		await rejects(start({ subject: "Rent\nfor the flat" }), "INVALID_ARGUMENT", "one line");
 		await rejects(start({ unit: "x".repeat(31) }), "INVALID_ARGUMENT", "at most 30");
-		await rejects(start({ currency: "Fr." }), "INVALID_ARGUMENT", "ISO 4217");
+		await rejects(start({ currencyCode: "Fr." }), "INVALID_ARGUMENT", "ISO 4217");
 		await rejects(start({}, {}), "INVALID_ARGUMENT", "exactly one of");
 		await rejects(start({}, { minimumToAccept: "1700", maximumToPay: "1900" }), "INVALID_ARGUMENT", "exactly one of");
 		await rejects(start({}, { minimumToAccept: "1'700" }), "INVALID_ARGUMENT", "isn't a plain amount");
@@ -159,7 +181,8 @@ Open until Tue 17 Nov.`);
 		const d = await createPriceDecision(env, anna, { price: { ...rent, answerBy: "2026-11-10" }, starterAnswer: { minimumToAccept: "1700" } });
 		if (d.validateOnly) throw new Error("expected a decision");
 		expect(d.decision.expireTime).toBe("2026-11-10T23:59:59.999Z");
-		expect(d.handoffMessage).toContain("Open until Tue 10 Nov.");
+		expect(d.decision.price.answerBy).toBe("2026-11-10");
+		expect(d.decision.handoffMessage).toContain("Open until Tue 10 Nov.");
 	});
 });
 
@@ -168,8 +191,15 @@ describe("answering a price request", () => {
 		const d = await annaLets("1700");
 		const result = await createPriceAnswer(env, ben, { code: d.combined, price: { maximumToPay: "1850" } });
 		if (result.validateOnly) throw new Error("expected an answer");
-		expect(result.decision).toMatchObject({ state: "AGREED", agreedPrice: "1775.00", agreedPriceText: "CHF 1,775 per month", price: { yourSide: "PAYS" } });
+		expect(result.decision).toMatchObject({
+			state: "AGREED",
+			price: { agreedPrice: "1775.00", agreedPriceText: "CHF 1,775 per month", yourSide: "PAYS", currencyCode: "CHF" },
+		});
 		expect(result.decision.participants.map((p) => p.role)).toEqual(["STARTER", "RESPONDER"]);
+		// Limits never come back once sent, not even your own; the starter's code only at creation.
+		expect(result).not.toHaveProperty("receivedLimit");
+		expect(result.decision).not.toHaveProperty("code");
+		expect(JSON.stringify(result)).not.toMatch(/1850|1,850|1700|1,700/);
 		expect(row()).toMatchObject({ state: "AGREED", agreed_minor: 177500, limit_sealed: null, code_used: 1, attempts: 1, notified: 1 });
 
 		expect(google.emails).toHaveLength(1);
@@ -181,24 +211,26 @@ describe("answering a price request", () => {
 		expect(email).not.toContain("1,850");
 
 		// Anna sees the same result.
-		expect(await getDecision(env, anna, d.name)).toMatchObject({ state: "AGREED", agreedPriceText: "CHF 1,775 per month", price: { yourSide: "RECEIVES" } });
-		expect(await getAnswer(env, ben, result.answer.name)).toEqual({ name: result.answer.name, kind: "PRICE", createTime: "2026-11-03T08:00:00.000Z" });
+		expect(await getDecision(env, anna, d.name)).toMatchObject({ state: "AGREED", price: { agreedPriceText: "CHF 1,775 per month", yourSide: "RECEIVES" } });
+		const answerId = (db.db.prepare("SELECT id FROM answers WHERE role = 'RESPONDER'").get() as { id: string }).id;
+		const answerName = `${d.name}/answers/${answerId}`;
+		expect(await getAnswer(env, ben, answerName)).toEqual({ name: answerName, price: {}, createTime: "2026-11-03T08:00:00.000Z" });
 	});
 
 	it("agrees at the limit when both give the same number, and keeps whole amounts whole", async () => {
-		const d = await annaLets(1800);
-		const same = await createPriceAnswer(env, ben, { code: d.combined, price: { maximumToPay: 1800 } });
-		expect(same.decision).toMatchObject({ agreedPrice: "1800.00" });
+		const d = await annaLets("1800");
+		const same = await createPriceAnswer(env, ben, { code: d.combined, price: { maximumToPay: "1800" } });
+		expect(same.decision).toMatchObject({ price: { agreedPrice: "1800.00" } });
 		const other = await annaLets("1700");
 		const odd = await createPriceAnswer(env, eve, { code: other.combined, price: { maximumToPay: "1851" } });
-		expect(odd.decision).toMatchObject({ agreedPriceText: "CHF 1,776 per month" });
+		expect(odd.decision).toMatchObject({ price: { agreedPriceText: "CHF 1,776 per month" } });
 	});
 
 	it("says only 'no deal' when the numbers don't overlap", async () => {
 		const d = await annaLets("1900");
 		const result = await createPriceAnswer(env, ben, { code: d.combined, price: { maximumToPay: "1800" } });
 		expect(result.decision).toMatchObject({ state: "NO_MATCH" });
-		expect(result.decision).not.toHaveProperty("agreedPrice");
+		expect(result.decision?.price).not.toHaveProperty("agreedPrice");
 		expect(JSON.stringify(result)).not.toContain("1900");
 		expect(row()).toMatchObject({ state: "NO_MATCH", agreed_minor: null, limit_sealed: null });
 		expect(google.emails[0].raw).toContain("Subject: =?UTF-8?B?");
@@ -287,11 +319,7 @@ describe("answering a price request", () => {
 	it("with validateOnly, reads the number back in the request's currency and binds nothing", async () => {
 		const d = await annaLets();
 		const check = await createPriceAnswer(env, ben, { code: d.combined, price: { maximumToPay: "1700" }, validateOnly: true });
-		expect(check).toMatchObject({
-			validateOnly: true,
-			receivedLimit: 'the most your person would pay: CHF 1,700 per month for "Rent for the flat at Seestrasse 12 (utilities included)", as the side that pays',
-			terms: { kind: "PRICE", yourSide: "PAYS", askFor: "maximumToPay", currency: "CHF" },
-		});
+		expect(check).toEqual({ validateOnly: true, receivedLimit: 'CHF 1,700 per month, the most you\'d pay for "Rent for the flat at Seestrasse 12 (utilities included)"' });
 		expect(row()).toMatchObject({ state: "WAITING", attempts: 0, responder_email: null, code_used: 0 });
 		// Someone else can still answer: nothing was bound.
 		const result = await createPriceAnswer(env, eve, { code: d.combined, price: { maximumToPay: "1700" } });
@@ -306,7 +334,7 @@ describe("answering a price request", () => {
 		expect(JSON.parse(events[0].detail_json)).toEqual({ kind: "price" });
 		expect(JSON.parse(events[1].detail_json)).toMatchObject({ kind: "price", outcome: "agreed" });
 		const everything = JSON.stringify(events);
-		for (const secret of ["1700", "1850", "1775", "170000", "185000", "177500", "Anna", "Ben", "Rent", d.code]) {
+		for (const secret of ["1700", "1850", "1775", "170000", "185000", "177500", "Anna", "Ben", "Rent", d.secret]) {
 			expect(everything).not.toContain(secret);
 		}
 	});
@@ -320,17 +348,16 @@ describe("answering a price request", () => {
 			const d = await annaLets(minimum);
 			await createPriceAnswer(env, ben, { code: d.combined, price: { maximumToPay: "50" } });
 		}
-		const fourth = await createPriceDecision(env, eve, { price: rent, starterAnswer: { minimumToAccept: "400" } });
-		if (fourth.validateOnly) throw new Error("expected a decision");
+		const fourth = codeOf(await createPriceDecision(env, eve, { price: rent, starterAnswer: { minimumToAccept: "400" } }));
 		const error = await rejects(
-			createPriceAnswer(env, ben, { code: `neutra:${fourth.name.split("/")[1]}.${fourth.code}`, price: { maximumToPay: "50" } }),
+			createPriceAnswer(env, ben, { code: fourth, price: { maximumToPay: "50" } }),
 			"RESOURCE_EXHAUSTED",
 			"3 price answers per day",
 		);
 		expect(error.reason).toBe("PRICE_ANSWER_LIMIT");
 		// A day later it's fine again.
 		vi.setSystemTime(new Date("2026-11-04T08:01:00Z"));
-		await createPriceAnswer(env, ben, { code: `neutra:${fourth.name.split("/")[1]}.${fourth.code}`, price: { maximumToPay: "50" } });
+		await createPriceAnswer(env, ben, { code: fourth, price: { maximumToPay: "50" } });
 	});
 
 	it("holds the daily limit when answers to different requests arrive at the same moment", async () => {
@@ -357,7 +384,7 @@ describe("answering a price request", () => {
 			return realFetch(input, init);
 		});
 		const result = await createPriceAnswer(env, ben, { code: d.combined, price: { maximumToPay: "1850" } });
-		expect(result.decision.state).toBe("AGREED");
+		expect(result.decision?.state).toBe("AGREED");
 		expect(row().notified).toBe(0);
 		google.fetch.mockImplementation(realFetch);
 
@@ -372,51 +399,54 @@ describe("answering a price request", () => {
 });
 
 describe("get_decision with a code", () => {
-	it("shows a price request's terms and the reader's side, without binding the code", async () => {
+	it("previews a price request from the reader's side, without binding the code", async () => {
 		const d = await annaLets("1850");
-		const terms = await requestTerms(env, ben, d.combined);
-		expect(terms).toEqual({
-			kind: "PRICE",
+		const { preview, isStarter } = await requestPreview(env, ben, d.combined);
+		expect(preview).toEqual({
 			from: "Anna",
-			subject: rent.subject,
-			details: rent.details,
-			currency: "CHF",
-			unit: "per month",
-			yourSide: "PAYS",
-			askFor: "maximumToPay",
-			rule: "MIDPOINT",
 			answerBy: "2026-11-17",
-			state: "WAITING",
+			open: true,
+			price: {
+				subject: rent.subject,
+				details: rent.details,
+				currencyCode: "CHF",
+				unit: "per month",
+				rule: "MIDPOINT",
+				yourSide: "PAYS",
+			},
 		});
-		expect(JSON.stringify(terms)).not.toContain("1850");
+		expect(isStarter).toBe(false);
+		expect(JSON.stringify(preview)).not.toContain("1850");
 		expect(row()).toMatchObject({ responder_email: null, attempts: 0, code_used: 0 });
-		expect(codeNextStep(terms)).toContain("answer.price.maximumToPay");
-		expect(codeNextStep(terms)).toContain("without suggesting a number");
+		expect(codeNextStep(preview, false)).toContain("answer.price.maximumToPay");
+		expect(codeNextStep(preview, false)).toContain("without suggesting a number");
 
-		// The starter sees their own side and a note.
-		expect(await requestTerms(env, anna, d.combined)).toMatchObject({ yourSide: "RECEIVES", askFor: "minimumToAccept", note: expect.any(String) });
+		// The starter sees their own side, and is told the other person answers.
+		const own = await requestPreview(env, anna, d.combined);
+		expect(own.preview.price).toMatchObject({ yourSide: "RECEIVES" });
+		expect(codeNextStep(own.preview, own.isStarter)).toContain("the other person answers it");
 	});
 
-	it("shows a meeting request's terms", async () => {
+	it("previews a meeting request", async () => {
 		const meeting = await createDecision(env, anna, {
 			durationSeconds: "3600s",
 			starterWindows: [{ startTime: "2026-11-04T17:00:00Z", endTime: "2026-11-04T20:00:00Z" }],
 		});
-		const terms = await requestTerms(env, ben, `neutra:${meeting.name.split("/")[1]}.${meeting.code}`);
-		expect(terms).toEqual({ kind: "MEETING", from: "Anna", duration: "3600s", answerBy: "2026-11-17", state: "WAITING" });
-		expect(codeNextStep(terms)).toContain("answer.meeting");
+		const { preview } = await requestPreview(env, ben, `neutra:${meeting.name.split("/")[1]}.${meeting.code}`);
+		expect(preview).toEqual({ from: "Anna", answerBy: "2026-11-17", open: true, meeting: { duration: "3600s" } });
+		expect(codeNextStep(preview, false)).toContain("answer.meeting");
 	});
 
-	it("shows outsiders only that a request ended, never its result", async () => {
+	it("shows outsiders only that a request is no longer open, never its result", async () => {
 		const d = await annaLets("1700");
 		await createPriceAnswer(env, ben, { code: d.combined, price: { maximumToPay: "1850" } });
-		const terms = await requestTerms(env, eve, d.combined);
-		expect(terms.state).toBe("ENDED");
-		expect(JSON.stringify(terms)).not.toMatch(/AGREED|1,775|1775/);
+		const { preview } = await requestPreview(env, eve, d.combined);
+		expect(preview.open).toBe(false);
+		expect(JSON.stringify(preview)).not.toMatch(/AGREED|1,775|1775/);
 		// The same code with its last character changed to a different one.
 		const last = d.combined.slice(-1);
-		await rejects(requestTerms(env, eve, `${d.combined.slice(0, -1)}${last === "a" ? "b" : "a"}`), "PERMISSION_DENIED");
-		await rejects(requestTerms(env, eve, d.code), "INVALID_ARGUMENT", "whole code");
+		await rejects(requestPreview(env, eve, `${d.combined.slice(0, -1)}${last === "a" ? "b" : "a"}`), "PERMISSION_DENIED");
+		await rejects(requestPreview(env, eve, d.secret), "INVALID_ARGUMENT", "whole code");
 	});
 });
 
@@ -486,21 +516,21 @@ describe("the PRICE_DECISIONS switch", () => {
 		expect(serverInstructions({ answer: false, start: false })).toBe(SERVER_INSTRUCTIONS);
 		const on = serverInstructions({ answer: true, start: true });
 		expect(on).toContain("agree privately: on a meeting time, or on a price");
-		expect(on).toContain("use create_price_decision");
+		expect(on).toContain("use create_decision with decision.price and starterAnswer.price");
 		expect(on).toContain("Never infer or suggest one.");
 		expect(on).toContain("Share your person's available times only through Neutra");
 		const answerOnly = serverInstructions({ answer: true, start: false });
-		expect(answerOnly).not.toContain("create_price_decision");
+		expect(answerOnly).not.toContain("decision.price");
 		expect(answerOnly).toContain("call get_decision with the code first");
 	});
 });
 
 describe("next steps for price decisions", () => {
-	const view = { price: { subject: "Rent" }, expireTime: "2026-11-17T08:00:00.000Z" };
+	const view = { price: { subject: "Rent", agreedPriceText: "CHF 1,775 per month" }, expireTime: "2026-11-17T08:00:00.000Z" };
 	it("say what to tell the person, in plain words", () => {
-		expect(priceNextStep("create_price_decision", { ...view, state: "WAITING" })).toContain("Show the handoffMessage exactly as written.");
+		expect(priceNextStep("create_decision", { ...view, state: "WAITING" })).toContain("Show the handoffMessage exactly as written.");
 		expect(priceNextStep("get_decision", { ...view, state: "WAITING" })).toBe("Waiting for the other side. Both of you get the result by email.");
-		expect(priceNextStep("create_answer", { ...view, state: "AGREED", agreedPriceText: "CHF 1,775 per month" })).toContain(
+		expect(priceNextStep("create_answer", { ...view, state: "AGREED" })).toContain(
 			"Tell your person: deal on Rent at CHF 1,775 per month. This is an agreement in principle only, not a contract",
 		);
 		expect(priceNextStep("create_answer", { ...view, state: "NO_MATCH" })).toContain("neither side learned the other's number");

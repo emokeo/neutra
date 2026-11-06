@@ -44,11 +44,12 @@ afterEach(() => {
 /** Anna lets the flat for at least the given amount a month. Returns the link token "<id>.<code>". */
 async function start(minimum = "1700"): Promise<string> {
 	const d = await createPriceDecision(env, anna, {
-		price: { subject: "Rent for the flat", details: "utilities included", currency: "CHF", unit: "per month" },
+		price: { subject: "Rent for the flat", details: "utilities included", currencyCode: "CHF", unit: "per month" },
 		starterAnswer: { minimumToAccept: minimum },
 	});
 	if (d.validateOnly) throw new Error("expected a decision");
-	return `${d.name.split("/")[1]}.${d.code}`;
+	// "neutra:<id>.<code>" without the prefix is the link token.
+	return (d.decision.code as string).replace(/^neutra:/, "");
 }
 
 async function as(person: { email: string; name: string }): Promise<string> {

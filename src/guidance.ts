@@ -19,8 +19,8 @@ Rules:
 - Every answer must cover at least twice the meeting length. If there is no common time, you may answer again with wider times; remainingAttempts says how many tries are left.`;
 
 // Price decisions. Answering one is open to anyone with a code while the switch is on; starting one only to
-// those who have create_price_decision, so that line is added only for them.
-const PRICE_START = `For a price (rent, a sale, a fee), use create_price_decision. Both people take part; Neutra doesn't advise on what to offer.`;
+// those whose create_decision takes decision.price, so that line is added only for them.
+const PRICE_START = `For a price (rent, a sale, a fee), use create_decision with decision.price and starterAnswer.price. Both people take part; Neutra doesn't advise on what to offer.`;
 const PRICE_RULES = `- Ask your person for their limit: the lowest they'd accept if they receive the money, the most they'd pay if they pay. Never infer or suggest one.
 - Read it back with currency, unit and side, using validateOnly, and wait for a yes before sending.
 - Tell them: one answer each; if there's a deal, each side can work out the other's limit.
@@ -88,21 +88,20 @@ export function nextStep(
 /** The parts of a price decision's view the next step needs. */
 type PriceDecisionView = {
 	state: string;
-	price: { subject: string };
-	agreedPriceText?: string;
+	price: { subject: string; agreedPriceText?: string };
 	expireTime: string;
 };
 
 /** A one-line instruction for the agent after a price decision call. */
-export function priceNextStep(tool: "create_price_decision" | "create_answer" | "get_decision", decision: PriceDecisionView): string {
-	if (tool === "create_price_decision") {
+export function priceNextStep(tool: "create_decision" | "create_answer" | "get_decision", decision: PriceDecisionView): string {
+	if (tool === "create_decision") {
 		return "Tell your person the request is ready and the other side never sees their number unless a deal lets them work it out. Show the handoffMessage exactly as written.";
 	}
 	switch (decision.state) {
 		case "WAITING":
 			return "Waiting for the other side. Both of you get the result by email.";
 		case "AGREED":
-			return `Tell your person: deal on ${decision.price.subject} at ${decision.agreedPriceText}. This is an agreement in principle only, not a contract, and no payment is made; they settle the details directly. Each side can now work out the other's limit.`;
+			return `Tell your person: deal on ${decision.price.subject} at ${decision.price.agreedPriceText}. This is an agreement in principle only, not a contract, and no payment is made; they settle the details directly. Each side can now work out the other's limit.`;
 		case "NO_MATCH":
 			return "No deal: the limits didn't overlap, and neither side learned the other's number. Your person can talk to them directly or start a new request.";
 		case "EXPIRED":
@@ -118,24 +117,25 @@ export function validateNextStep(receivedLimit: string): string {
 }
 
 /** After get_decision with a code: what to ask the person, before answering. */
-export function codeNextStep(terms: {
-	kind: "MEETING" | "PRICE";
-	from: string;
-	state: "WAITING" | "ENDED";
-	note?: string;
-	subject?: string;
-	currency?: string;
-	unit?: string;
-	yourSide?: "PAYS" | "RECEIVES";
-	askFor?: string;
-}): string {
-	if (terms.note) return "Your person started this request: the other person answers it with the code, not you. Use get_decision with the decision's name to see its state.";
-	if (terms.state === "ENDED") {
-		return `This request can't be answered any more: it has ended or someone else answered it. If your person still wants to, ask ${terms.from} to send a new one.`;
+export function codeNextStep(
+	preview: {
+		from: string;
+		open: boolean;
+		meeting?: { duration: string };
+		price?: { subject: string; currencyCode: string; unit?: string; yourSide: "PAYS" | "RECEIVES" };
+	},
+	isStarter: boolean,
+): string {
+	if (isStarter) {
+		return "Your person started this request: the other person answers it with the code, not you. Use get_decision with the decision's name to see its state.";
 	}
-	if (terms.kind === "MEETING") {
+	if (!preview.open) {
+		return `This request can't be answered any more: it has ended or someone else answered it. If your person still wants to, ask ${preview.from} to send a new one.`;
+	}
+	if (!preview.price) {
 		return "Ask your person when they're free (together at least twice the meeting length), then call create_answer with this code and answer.meeting.";
 	}
-	const pays = terms.yourSide === "PAYS";
-	return `Your person ${pays ? "pays" : "receives the money"}. Ask them for ${pays ? "the most they'd pay" : "the least they'd accept"} for "${terms.subject}" in ${terms.currency}${terms.unit ? ` ${terms.unit}` : ""}, without suggesting a number. Check it with create_answer and validateOnly, read it back, and send answer.price.${terms.askFor} once they confirm.`;
+	const p = preview.price;
+	const pays = p.yourSide === "PAYS";
+	return `Your person ${pays ? "pays" : "receives the money"}. Ask them for ${pays ? "the most they'd pay" : "the least they'd accept"} for "${p.subject}" in ${p.currencyCode}${p.unit ? ` ${p.unit}` : ""}, without suggesting a number. Check it with create_answer and validateOnly, read it back, and send answer.price.${pays ? "maximumToPay" : "minimumToAccept"} once they confirm.`;
 }

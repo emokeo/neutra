@@ -52,12 +52,13 @@ A remote MCP server with Google sign-in. Resources follow [Google's AIPs](https:
 
 ### Price decisions (off by default)
 
-Two people agree on a price (rent, a sale, a fee) without either seeing the other's limit. The starter's assistant calls `create_price_decision` with the terms and one number: the least they'd accept if they receive the money, or the most they'd pay. The other side answers once with `create_answer` and `answer.price`, always in the request's currency. If the payer's maximum is at least the receiver's minimum, both hear the price halfway between (`MIDPOINT`); otherwise both hear only "no deal". Both get the result by email.
+Two people agree on a price (rent, a sale, a fee) without either seeing the other's limit. A price decision is a kind of decision: the starter's assistant calls `create_decision` with `decision.price` (subject, details, `currencyCode`, unit, `answerBy`) and `starterAnswer.price` with one number: `minimumToAccept` if they receive the money, or `maximumToPay` if they pay. The other side answers once with `create_answer` and `answer.price`, always in the decision's currency. If the payer's maximum is at least the receiver's minimum, both hear the price halfway between (`MIDPOINT`); otherwise both hear only "no deal". Both get the result by email.
 
 - The answering person's number is never stored. The starter's is encrypted with a key made from the request code (stored only as a hash) and cleared as soon as the request settles or ends.
-- `get_decision` with a `code` shows what a request asks for before answering, without using it up.
+- `get_decision` with a `code` returns a `preview` of what a request asks for before answering (`yourSide` `PAYS`: send `maximumToPay`; `RECEIVES`: send `minimumToAccept`), without using it up.
+- Inputs and outputs follow the `neutra.v1` messages (proto3 JSON): every price field sits inside `price`, e.g. `decision.price.agreedPriceText`.
 - `validateOnly` on either call reads the number back for the person to confirm, without sending anything.
-- Switched by `PRICE_DECISIONS` in `wrangler.jsonc`: `off` (nothing changes for anyone), `testers` (only `ALLOWED_EMAILS` can start one; anyone with a code can answer) or `open`. See `docs/RUNBOOK.md`.
+- Switched by `PRICE_DECISIONS` in `wrangler.jsonc`: `off` (nothing changes for anyone), `testers` (only `ALLOWED_EMAILS` get `decision.price` in `create_decision`; anyone with a code can answer) or `open`. See `docs/RUNBOOK.md`.
 
 Errors use `google.rpc` codes: `NOT_FOUND`, `PERMISSION_DENIED`, `FAILED_PRECONDITION`, `INVALID_ARGUMENT`, `RESOURCE_EXHAUSTED` (a daily or hourly limit was reached).
 

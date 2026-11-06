@@ -5,7 +5,7 @@ import { checkCreateAnswer, checkCreateDecision } from "./limits";
 import { formatDay, formatRange, isValidTimeZone, parseTimestamp } from "./time";
 import { CLAUDE_DIRECTORY_URL } from "./links";
 import { durationText } from "./web-form";
-import { notAMeeting, priceTermsForCode, priceView, termsOf } from "./price";
+import { notAMeeting, pricePreview, priceView, termsOf } from "./price";
 
 export type Caller = { email: string; name: string; client?: string };
 export type Interval = { startTime: string; endTime: string };
@@ -463,11 +463,11 @@ export async function getDecision(env: Env, caller: Caller, name: string) {
 }
 
 /**
- * What a request asks for, for anyone holding its code (get_decision by code): the terms the hand-off message
- * already shows, and whether it can still be answered. Read-only: the code stays unbound and nothing is counted.
- * The outcome stays private to the two people, so this says only WAITING or ENDED.
+ * What a request asks for, for anyone holding its code (get_decision by code, neutra.v1.DecisionPreview): the
+ * terms the hand-off message already shows, and whether it can still be answered. Read-only: the code stays
+ * unbound and nothing is counted. The outcome stays private to the two people, so this says only open or not.
  */
-export async function requestTerms(env: Env, caller: Caller, codeText: string) {
+export async function requestPreview(env: Env, caller: Caller, codeText: string) {
 	const combined = splitCombinedCode(codeText);
 	if (!combined) {
 		throw new ApiError("INVALID_ARGUMENT", 'Send the whole code from the message: "neutra:" followed by 26 characters, a dot and 12 more.');
@@ -482,16 +482,13 @@ export async function requestTerms(env: Env, caller: Caller, codeText: string) {
 		(row.state === "WAITING" || row.state === "MATCHING") &&
 		!(row.offered_until && Date.parse(row.offered_until) < now) &&
 		(!row.responder_email || same(row.responder_email, caller.email));
-	const state = open ? ("WAITING" as const) : ("ENDED" as const);
-	if (row.kind === "price") return priceTermsForCode(row, caller, state);
-	return {
-		kind: "MEETING" as const,
+	const preview = {
 		from: firstName(row.starter_name) || "Someone",
-		duration: `${row.duration_seconds}s`,
 		answerBy: row.expire_time.slice(0, 10),
-		state,
-		...(same(caller.email, row.starter_email) ? { note: "Your person started this request. The other person answers it, not you." } : {}),
+		open,
+		...(row.kind === "price" ? { price: pricePreview(row, caller) } : { meeting: { duration: `${row.duration_seconds}s` } }),
 	};
+	return { preview, isStarter: same(caller.email, row.starter_email) };
 }
 
 export async function deleteDecision(env: Env, caller: Caller, name: string): Promise<void> {
@@ -726,8 +723,8 @@ export async function getAnswer(env: Env, caller: Caller, name: string) {
 		throw new ApiError("PERMISSION_DENIED", "Only the author can read an answer.");
 	}
 	const decision = await env.DB.prepare("SELECT kind FROM decisions WHERE id = ?").bind(row.decision_id).first<{ kind: string }>();
-	// A price answer keeps no number, so there is nothing to show but that it exists.
-	if (decision?.kind === "price") return { name, kind: "PRICE" as const, createTime: row.create_time };
+	// A price answer keeps no number (neutra.v1.PriceAnswer is input only), so there is nothing to show but that it exists.
+	if (decision?.kind === "price") return { name, price: {}, createTime: row.create_time };
 	const windows: { start: number; end: number }[] = JSON.parse(row.windows_json);
 	return {
 		name,
@@ -784,7 +781,7 @@ export async function webRequest(env: Env, id: string, code: string, viewerEmail
 			responder?.time_zone ?? "UTC",
 		);
 	}
-	const price = row.kind === "price" ? priceView(row, [], { email: "", name: "" }) : null;
+	const price = row.kind === "price" ? priceView(row, [], { email: "", name: "" }).price : null;
 	return {
 		kind: row.kind === "price" ? "price" : "meeting",
 		starterFirstName: firstName(row.starter_name) || "Someone",
@@ -799,7 +796,13 @@ export async function webRequest(env: Env, id: string, code: string, viewerEmail
 		...(price
 			? {
 					// Seen from the side of whoever isn't the starter: the page is for the person answering.
-					price: { ...price.price, yourSide: termsOf(row).starterSide === "PAYS" ? ("RECEIVES" as const) : ("PAYS" as const) },
+					price: {
+						subject: price.subject,
+						...(price.details ? { details: price.details } : {}),
+						currency: price.currencyCode,
+						...(price.unit ? { unit: price.unit } : {}),
+						yourSide: termsOf(row).starterSide === "PAYS" ? ("RECEIVES" as const) : ("PAYS" as const),
+					},
 					...(viewer === "responder" && price.agreedPriceText ? { agreedPriceText: price.agreedPriceText } : {}),
 				}
 			: {}),

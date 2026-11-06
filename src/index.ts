@@ -3,29 +3,21 @@ import OAuthProvider from "@cloudflare/workers-oauth-provider";
 import { McpServer } from "@modelcontextprotocol/server";
 import { createMcpHandler, getMcpAuthContext } from "agents/mcp/server";
 import { z } from "zod";
-import {
-	ApiError,
-	type Caller,
-	createAnswer,
-	createDecision,
-	deleteDecision,
-	getAnswer,
-	getDecision,
-	requestTerms,
-} from "./decisions";
+import { ApiError, type Caller, deleteDecision, getAnswer } from "./decisions";
 import { recordEvent } from "./events";
 import { createFeatureRequest, getFeatureRequest } from "./feedback";
 import { GoogleHandler } from "./google-handler";
 import { isAllowed } from "./utils";
-import { codeNextStep, nextStep, priceNextStep, serverInstructions, validateNextStep } from "./guidance";
+import { serverInstructions } from "./guidance";
+import { answerRequest, readDecision, startDecision } from "./handlers";
 import { runMaintenance } from "./maintenance";
-import { canStartPrice, createPriceAnswer, createPriceDecision, type LimitInput, priceMode } from "./price";
+import { canStartPrice, priceMode } from "./price";
 import {
 	CREATE_ANSWER_MEETING,
 	CREATE_ANSWER_WITH_PRICE,
 	CREATE_DECISION,
+	CREATE_DECISION_WITH_PRICE,
 	CREATE_FEATURE_REQUEST,
-	CREATE_PRICE_DECISION,
 	DELETE_DECISION,
 	GET_ANSWER,
 	GET_DECISION_MEETING,
@@ -40,10 +32,6 @@ export type Props = {
 	// The assistant's registered name, e.g. "Claude", recorded at sign-in.
 	client?: string;
 };
-
-function exactlyOne(values: unknown[], message: string): void {
-	if (values.filter((v) => v !== undefined).length !== 1) throw new ApiError("INVALID_ARGUMENT", message);
-}
 
 function ok(result: unknown) {
 	return { content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }] };
@@ -79,54 +67,6 @@ async function run(tool: string, caller: Caller | undefined, action: (caller: Ca
 	}
 }
 
-type Windows = { availableWindows: { startTime: string; endTime: string }[]; timeZone?: string };
-
-/** create_answer, for both inputs: the meeting-only one (switch off) and the one with price (switch on). */
-async function answer(
-	c: Caller,
-	request: { parent?: string; code: string; answer: { meeting?: Windows; price?: LimitInput }; validateOnly?: boolean },
-) {
-	const { meeting, price } = request.answer;
-	exactlyOne(
-		[meeting, price],
-		"Send exactly one of answer.meeting (free times) or answer.price (a price limit). get_decision with the code says which this request needs.",
-	);
-	if (price) {
-		const result = await createPriceAnswer(env, c, { parent: request.parent, code: request.code, price, validateOnly: request.validateOnly });
-		if (result.validateOnly) {
-			return { receivedLimit: result.receivedLimit, terms: result.terms, nextStep: validateNextStep(result.receivedLimit) };
-		}
-		return { ...result, nextStep: priceNextStep("create_answer", result.decision) };
-	}
-	if (request.validateOnly) {
-		throw new ApiError(
-			"INVALID_ARGUMENT",
-			"validateOnly is only for price answers. For a meeting, send the times without it: receivedWindows in the reply shows what Neutra understood.",
-		);
-	}
-	const windows = meeting as Windows;
-	const result = await createAnswer(env, c, {
-		parent: request.parent,
-		code: request.code,
-		windows: windows.availableWindows,
-		timeZone: windows.timeZone,
-	});
-	return { ...result, nextStep: nextStep("create_answer", result.decision, result.receivedWindows) };
-}
-
-/** get_decision, by name (participants) or, with the switch on, by code (anyone holding it). */
-async function read(c: Caller, request: { name?: string; code?: string }) {
-	if (request.name === undefined && request.code === undefined) throw new ApiError("INVALID_ARGUMENT", "Send name or code.");
-	exactlyOne([request.name, request.code], "Send either name or code, not both.");
-	if (request.code !== undefined) {
-		const terms = await requestTerms(env, c, request.code);
-		return { ...terms, nextStep: codeNextStep(terms) };
-	}
-	const decision = await getDecision(env, c, request.name as string);
-	if ("kind" in decision) return { ...decision, nextStep: priceNextStep("get_decision", decision) };
-	return { ...decision, nextStep: nextStep("get_decision", decision) };
-}
-
 function createServer() {
 	const props = getMcpAuthContext()?.props as Props | undefined;
 	const caller = props ? { email: props.email, name: props.name, client: props.client } : undefined;
@@ -138,41 +78,28 @@ function createServer() {
 		{ instructions: serverInstructions({ answer: priceOn, start: priceStart }) },
 	);
 
-	// The same tools, in the same order, as toolList() in tools.ts (which the tests check).
-	server.registerTool("create_decision", CREATE_DECISION, async (request) =>
-		run("create_decision", caller, async (c) => {
-			const decision = await createDecision(env, c, {
-				durationSeconds: request.decision.meeting.duration,
-				starterWindows: request.starterAnswer.meeting.availableWindows,
-				timeZone: request.starterAnswer.meeting.timeZone,
-			});
-			return { ...decision, nextStep: nextStep("create_decision", decision, decision.receivedWindows) };
-		}),
-	);
-
+	// The same tools, in the same order, as toolList() in tools.ts (which the tests check). create_decision,
+	// create_answer and get_decision take price inputs only while price decisions are on (create_decision only for
+	// callers who may start one); otherwise they keep their meeting-only inputs. Both inputs fit one handler.
 	if (priceStart) {
-		server.registerTool("create_price_decision", CREATE_PRICE_DECISION, async (request) =>
-			run("create_price_decision", caller, async (c) => {
-				const result = await createPriceDecision(env, c, {
-					price: request.decision.price,
-					starterAnswer: request.starterAnswer.price,
-					validateOnly: request.validateOnly,
-				});
-				if (result.validateOnly) {
-					return { receivedLimit: result.receivedLimit, terms: result.terms, nextStep: validateNextStep(result.receivedLimit) };
-				}
-				return { ...result, nextStep: priceNextStep("create_price_decision", result.decision) };
-			}),
+		server.registerTool("create_decision", CREATE_DECISION_WITH_PRICE, async (request) =>
+			run("create_decision", caller, (c) => startDecision(env, c, request, true)),
+		);
+	} else {
+		server.registerTool("create_decision", CREATE_DECISION, async (request) =>
+			run("create_decision", caller, (c) => startDecision(env, c, request, false)),
 		);
 	}
-
-	// With the switch off, create_answer and get_decision keep their meeting-only inputs; both inputs fit one handler.
 	if (priceOn) {
-		server.registerTool("create_answer", CREATE_ANSWER_WITH_PRICE, async (request) => run("create_answer", caller, (c) => answer(c, request)));
-		server.registerTool("get_decision", GET_DECISION_WITH_PRICE, async (request) => run("get_decision", caller, (c) => read(c, request)));
+		server.registerTool("create_answer", CREATE_ANSWER_WITH_PRICE, async (request) =>
+			run("create_answer", caller, (c) => answerRequest(env, c, request)),
+		);
+		server.registerTool("get_decision", GET_DECISION_WITH_PRICE, async (request) => run("get_decision", caller, (c) => readDecision(env, c, request)));
 	} else {
-		server.registerTool("create_answer", CREATE_ANSWER_MEETING, async (request) => run("create_answer", caller, (c) => answer(c, request)));
-		server.registerTool("get_decision", GET_DECISION_MEETING, async (request) => run("get_decision", caller, (c) => read(c, request)));
+		server.registerTool("create_answer", CREATE_ANSWER_MEETING, async (request) =>
+			run("create_answer", caller, (c) => answerRequest(env, c, request)),
+		);
+		server.registerTool("get_decision", GET_DECISION_MEETING, async (request) => run("get_decision", caller, (c) => readDecision(env, c, request)));
 	}
 
 	server.registerTool("delete_decision", DELETE_DECISION, async ({ name }) =>

@@ -32,8 +32,8 @@ When the health check says the key is refused or missing a permission:
 
 ## Price decisions (PRICE_DECISIONS)
 `PRICE_DECISIONS` in `wrangler.jsonc` switches them. Change it in a PR; merging deploys it.
-- `"off"` (the default): `create_price_decision` isn't offered, price answers are refused ("Price requests aren't available yet."), and the briefing and every tool (texts and inputs) are exactly as without the feature (checked by `test/tools.test.ts`).
-- `"testers"`: only the emails in `ALLOWED_EMAILS` see `create_price_decision`. Anyone holding a code can answer, since the person answering is usually not a tester.
+- `"off"` (the default): `create_decision` takes no `decision.price`, price answers are refused ("Price requests aren't available yet."), and the briefing and every tool (texts and inputs) are exactly as without the feature (checked by `test/tools.test.ts`).
+- `"testers"`: only the emails in `ALLOWED_EMAILS` get `decision.price` in `create_decision`; everyone else gets today's meeting-only version. Anyone holding a code can answer, since the person answering is usually not a tester.
 - `"open"`: everyone can start one.
 
 Switching back to `"off"` while price requests are open: they can't be answered any more and expire after their deadline (the starter gets the usual "nobody answered" email). Nothing else is needed.

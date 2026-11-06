@@ -120,14 +120,50 @@ describe("tools", () => {
 		expect(published(toolList({ answer: false, start: false }))).toEqual(published(BEFORE));
 	});
 
-	it("add price answers and reading by code when on, and the start tool only for those who may start", () => {
+	it("keep the same tool names in every mode: a price decision is a kind of decision, not a tool of its own", () => {
+		for (const answer of [false, true]) {
+			for (const start of [false, true]) {
+				expect(toolList({ answer, start }).map(([name]) => name)).toEqual(BEFORE.map(([name]) => name));
+			}
+		}
+	});
+
+	it("add price answers and reading by code when on; create_decision stays as before for those who may not start one", () => {
 		const on = published(toolList({ answer: true, start: false }));
-		expect(on.map((t) => t.name)).toEqual(BEFORE.map(([name]) => name));
 		const answer = on.find((t) => t.name === "create_answer")!;
 		expect(JSON.stringify(answer.inputSchema)).toContain("maximumToPay");
 		expect(JSON.stringify(answer.inputSchema)).toContain("validateOnly");
 		expect(JSON.stringify(on.find((t) => t.name === "get_decision")!.inputSchema)).toContain('"code"');
-		expect(toolList({ answer: true, start: true }).map(([name]) => name)).toContain("create_price_decision");
+		// Testers mode, for someone not on the allowlist: today's create_decision.
+		expect(on.find((t) => t.name === "create_decision")).toEqual(published(BEFORE).find((t) => t.name === "create_decision"));
+	});
+
+	it("let create_decision start either kind for those who may start a price decision", () => {
+		const start = published(toolList({ answer: true, start: true })).find((t) => t.name === "create_decision")!;
+		expect(start.title).toBe("Start a Neutra decision");
+		expect(start.description).toBe(
+			"Find a meeting time or agree on a price with someone, without either side seeing the other's calendar or limit. Send your person's free times or limit; returns a message for them to forward.",
+		);
+		const schema = start.inputSchema as {
+			properties: {
+				decision: { properties: Record<string, { description?: string }>; required?: string[] };
+				starterAnswer: { properties: Record<string, unknown>; required?: string[] };
+				validateOnly: unknown;
+			};
+		};
+		const { decision, starterAnswer } = schema.properties;
+		// Both kinds, both optional: exactly one is checked on the server, so there is no union in the schema.
+		expect(Object.keys(decision.properties).sort()).toEqual(["meeting", "price"]);
+		expect(decision.required ?? []).toEqual([]);
+		expect(Object.keys(starterAnswer.properties).sort()).toEqual(["meeting", "price"]);
+		expect(starterAnswer.required ?? []).toEqual([]);
+		expect(decision.properties.meeting.description).toBe("To find a meeting time.");
+		expect(decision.properties.price.description).toContain("To agree on a price (rent, a sale, a fee).");
+		expect(JSON.stringify(starterAnswer)).toContain("minimumToAccept");
+		expect(JSON.stringify(starterAnswer)).toContain("maximumToPay");
+		expect(schema.properties.validateOnly).toBeTruthy();
+		expect(JSON.stringify(start.inputSchema)).not.toContain("anyOf");
+		expect(JSON.stringify(start.inputSchema)).not.toContain("oneOf");
 	});
 
 	it("use no anyOf, which strict clients handle badly", () => {

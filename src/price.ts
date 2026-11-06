@@ -41,10 +41,11 @@ export type PriceTerms = {
 	rule: "MIDPOINT";
 };
 
+/** decision.price as sent by the starter (neutra.v1.PriceDecision, input fields). */
 export type PriceInput = {
 	subject: string;
 	details?: string;
-	currency: string;
+	currencyCode: string;
 	unit?: string;
 	answerBy?: string;
 };
@@ -157,64 +158,66 @@ function deadline(answerBy: string | undefined, now: number): number {
 	return Math.min(day + DAY_MS - 1, latest);
 }
 
-/** "the least your person would accept: CHF 1,850 per month for "Rent", as the side that receives the money" */
+/** 'CHF 1,850 per month, the least you'd accept for "Rent"': worded to be read back to the person as it is. */
 function limitText(side: Side, minor: number, terms: PriceTerms): string {
-	const what = side === "PAYS" ? "the most your person would pay" : "the least your person would accept";
-	const role = side === "PAYS" ? "the side that pays" : "the side that receives the money";
-	return `${what}: ${formatAmount(minor, terms.currency, terms.unit)} for "${subjectText(terms)}", as ${role}`;
+	return `${formatAmount(minor, terms.currency, terms.unit)}, ${askFor(side, "you")} for "${subjectText(terms)}"`;
+}
+
+/** The deadline as a day, "2026-11-17" (UTC), as the starter set it. */
+function answerByOf(row: DecisionRow): string {
+	return row.expire_time.slice(0, 10);
 }
 
 // ---- What callers see
 
 export type PriceView = ReturnType<typeof priceView>;
 
-/** A price decision as the API shows it. Never any limit: only the agreed price, once there is one. */
-export function priceView(row: DecisionRow, answers: AnswerRow[], caller: Caller) {
+/**
+ * A price decision as the API shows it (neutra.v1.Decision with price): everything about the price inside
+ * price, the rest in the same top-level fields as meetings. Never any limit: only the agreed price, once there is one.
+ * The code and hand-off message are shown only to the starter, only at creation.
+ */
+export function priceView(row: DecisionRow, answers: AnswerRow[], caller: Caller, created?: { code: string; handoffMessage: string }) {
 	const terms = termsOf(row);
 	const yourSide = same(caller.email, row.starter_email) ? terms.starterSide : other(terms.starterSide);
 	return {
 		name: `decisions/${row.id}`,
-		kind: "PRICE" as const,
-		state: row.state as "WAITING" | "AGREED" | "NO_MATCH" | "EXPIRED",
 		price: {
 			subject: terms.subject,
 			...(terms.details ? { details: terms.details } : {}),
-			currency: terms.currency,
+			currencyCode: terms.currency,
 			...(terms.unit ? { unit: terms.unit } : {}),
+			answerBy: answerByOf(row),
 			rule: terms.rule,
 			yourSide,
+			...(row.state === "AGREED" && row.agreed_minor !== null
+				? {
+						agreedPrice: plainAmount(row.agreed_minor, terms.currency),
+						agreedPriceText: formatAmount(row.agreed_minor, terms.currency, terms.unit),
+					}
+				: {}),
 		},
-		...(row.state === "AGREED" && row.agreed_minor !== null
-			? {
-					agreedPrice: plainAmount(row.agreed_minor, terms.currency),
-					agreedPriceText: formatAmount(row.agreed_minor, terms.currency, terms.unit),
-				}
-			: {}),
+		state: row.state as "WAITING" | "AGREED" | "NO_MATCH" | "EXPIRED",
 		participants: answers.map((a) => ({ displayName: a.author_name, role: a.role })),
+		...(created ? { code: created.code, handoffMessage: created.handoffMessage } : {}),
 		expireTime: row.expire_time,
 		createTime: row.create_time,
-		updateTime: row.update_time,
 	};
 }
 
-/** The terms for whoever holds the code (get_decision by code): what the hand-off message says, nothing more. */
-export function priceTermsForCode(row: DecisionRow, caller: Caller, state: "WAITING" | "ENDED") {
+/**
+ * The terms for whoever holds the code (the price part of get_decision's preview): what the hand-off message
+ * says, from the reader's side. yourSide PAYS means send maximumToPay; RECEIVES, minimumToAccept.
+ */
+export function pricePreview(row: DecisionRow, caller: Caller) {
 	const terms = termsOf(row);
-	const isStarter = same(caller.email, row.starter_email);
-	const yourSide = isStarter ? terms.starterSide : other(terms.starterSide);
 	return {
-		kind: "PRICE" as const,
-		from: firstName(row.starter_name) || "Someone",
 		subject: terms.subject,
 		...(terms.details ? { details: terms.details } : {}),
-		currency: terms.currency,
+		currencyCode: terms.currency,
 		...(terms.unit ? { unit: terms.unit } : {}),
-		yourSide,
-		askFor: fieldFor(yourSide),
 		rule: terms.rule,
-		answerBy: row.expire_time.slice(0, 10),
-		state,
-		...(isStarter ? { note: "Your person started this request. The other person answers it, not you." } : {}),
+		yourSide: same(caller.email, row.starter_email) ? terms.starterSide : other(terms.starterSide),
 	};
 }
 
@@ -280,7 +283,7 @@ export async function createPriceDecision(
 	const subject = oneLine(request.price.subject, "subject", 120, "Rent for the flat at Seestrasse 12", 3) as string;
 	const details = oneLine(request.price.details, "details", 200, "utilities included");
 	const unit = oneLine(request.price.unit, "unit", 30, "per month");
-	const currency = currencyCode(request.price.currency);
+	const currency = currencyCode(request.price.currencyCode);
 	const { minimumToAccept, maximumToPay } = request.starterAnswer;
 	if ((minimumToAccept === undefined) === (maximumToPay === undefined)) {
 		throw new ApiError(
@@ -311,11 +314,7 @@ export async function createPriceDecision(
 	await checkCreateDecision(env, caller.email, now);
 	if (request.validateOnly) {
 		// Nothing stored and nothing counted: this is only for reading the number back to the person.
-		return {
-			validateOnly: true as const,
-			receivedLimit,
-			terms: { ...terms, answerBy: iso(expire).slice(0, 10) },
-		};
+		return { validateOnly: true as const, receivedLimit };
 	}
 
 	const id = randomId(26);
@@ -384,20 +383,16 @@ export async function createPriceDecision(
 		email: caller.email,
 		detail: { kind: "price" },
 	});
-	return {
-		name: `decisions/${id}`,
+	const handoffMessage = priceHandoffMessage({
+		starterName: caller.name,
+		decisionId: id,
 		code,
-		handoffMessage: priceHandoffMessage({
-			starterName: caller.name,
-			decisionId: id,
-			code,
-			connectorUrl: env.MCP_RESOURCE,
-			expires: formatDay(expire),
-			terms,
-		}),
-		decision: priceView(row, [answer], caller),
-		receivedLimit,
-	};
+		connectorUrl: env.MCP_RESOURCE,
+		expires: formatDay(expire),
+		terms,
+	});
+	// The code in its combined form, the one thing the other side needs.
+	return { decision: priceView(row, [answer], caller, { code: combinedCode(id, code), handoffMessage }), receivedLimit };
 }
 
 // ---- Answering
@@ -460,11 +455,7 @@ export async function createPriceAnswer(
 	await checkPriceAnswer(env, caller.email, now);
 	const receivedLimit = limitText(side, minor, terms);
 	if (request.validateOnly) {
-		return {
-			validateOnly: true as const,
-			receivedLimit,
-			terms: priceTermsForCode(row, caller, "WAITING"),
-		};
+		return { validateOnly: true as const, receivedLimit };
 	}
 
 	let starterLimit: number;
@@ -531,10 +522,8 @@ export async function createPriceAnswer(
 	} catch (error) {
 		console.error("result email failed", row.id, error);
 	}
-	return {
-		answer: { name: `decisions/${row.id}/answers/${answerId}`, author: caller.name, createTime: iso(now) },
-		decision: priceView(next, answers, caller),
-	};
+	// The limit just sent isn't returned: limits never come back once submitted, not even your own.
+	return { decision: priceView(next, answers, caller) };
 }
 
 // ---- Emails

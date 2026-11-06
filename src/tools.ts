@@ -47,25 +47,44 @@ export const CREATE_DECISION = {
 	annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
 };
 
-export const CREATE_PRICE_DECISION = {
-	title: "Start agreeing on a price",
+export const CREATE_DECISION_WITH_PRICE = {
+	title: "Start a Neutra decision",
 	description:
-		"Agree a price with another person who also takes part, without either side seeing the other's limit. Send your person's limit and the terms; returns a message for them to forward.",
+		"Find a meeting time or agree on a price with someone, without either side seeing the other's calendar or limit. Send your person's free times or limit; returns a message for them to forward.",
 	// One object with optional fields instead of a union: strict-schema clients handle unions badly.
 	inputSchema: z.object({
-		decision: z.object({
-			price: z.object({
-				subject: z.string().describe('What the price is for, 3 to 120 characters, shown to both sides, e.g. "Rent for the flat at Seestrasse 12"'),
-				details: z.string().optional().describe('Up to 200 characters, shown to both sides, e.g. "utilities included"'),
-				currency: z.string().describe('ISO 4217 code, e.g. "CHF"'),
-				unit: z.string().optional().describe('Up to 30 characters, e.g. "per month"'),
-				answerBy: z.string().optional().describe('Last day to answer, "YYYY-MM-DD", 1 to 14 days ahead. Leave out for 14 days.'),
-			}),
-		}),
+		decision: z
+			.object({
+				meeting: z
+					.object({ duration: z.string().describe('Seconds, e.g. "3600s"') })
+					.optional()
+					.describe("To find a meeting time."),
+				price: z
+					.object({
+						subject: z.string().describe('What the price is for, 3 to 120 characters, shown to both sides, e.g. "Rent for the flat at Seestrasse 12"'),
+						details: z.string().optional().describe('Up to 200 characters, shown to both sides, e.g. "utilities included"'),
+						currencyCode: z.string().describe('ISO 4217 code, e.g. "CHF". Both answers are in this currency.'),
+						unit: z.string().optional().describe('Up to 30 characters, e.g. "per month"'),
+						answerBy: z.string().optional().describe('Last day to answer, "YYYY-MM-DD", 1 to 14 days ahead. Leave out for 14 days.'),
+					})
+					.optional()
+					.describe(
+						"To agree on a price (rent, a sale, a fee). Your person's side follows from starterAnswer.price: minimumToAccept if they receive the money, maximumToPay if they pay.",
+					),
+			})
+			.describe("Exactly one of meeting or price."),
 		starterAnswer: z
-			.object({ price: z.object({ minimumToAccept: MinimumToAccept, maximumToPay: MaximumToPay }) })
-			.describe("Exactly one of minimumToAccept or maximumToPay. Never shown to anyone."),
-		validateOnly: ValidateOnly.describe("Check the amount and get it back to read to your person, without sending or storing anything."),
+			.object({
+				meeting: MeetingAnswer.optional().describe("With decision.meeting: your person's free times."),
+				price: z
+					.object({ minimumToAccept: MinimumToAccept, maximumToPay: MaximumToPay })
+					.optional()
+					.describe("With decision.price: exactly one of minimumToAccept or maximumToPay. Never shown to anyone."),
+			})
+			.describe("Matching the decision: meeting with decision.meeting, price with decision.price."),
+		validateOnly: ValidateOnly.describe(
+			"Price decisions only: check the limit and get it back to read to your person, without sending or storing anything.",
+		),
 	}),
 	annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
 };
@@ -121,7 +140,9 @@ export const GET_DECISION_WITH_PRICE = {
 		code: z
 			.string()
 			.optional()
-			.describe('A "neutra:<id>.<code>" code from a forwarded message: shows what the request asks for, without answering it.'),
+			.describe(
+				'A "neutra:<id>.<code>" code from a forwarded message: returns a preview of what the request asks for, without answering it. For a price, preview.price.yourSide is your person\'s side. PAYS: send maximumToPay; RECEIVES: send minimumToAccept.',
+			),
 	}),
 	// Only reads, by name or by code: a code is never bound or counted here.
 	annotations: READ_HINTS,
@@ -168,12 +189,12 @@ export type ToolDefinition = { title: string; description: string; inputSchema: 
 
 /**
  * The tools a caller gets, in the order they are registered. index.ts registers exactly these:
- * price.answer is "the switch is on", price.start is "this caller may start a price decision".
+ * price.answer is "the switch is on", price.start is "this caller may start a price decision"
+ * (open, or testers for those on the allowlist).
  */
 export function toolList(price: { answer: boolean; start: boolean }): [string, ToolDefinition][] {
 	return [
-		["create_decision", CREATE_DECISION],
-		...(price.start ? [["create_price_decision", CREATE_PRICE_DECISION] as [string, ToolDefinition]] : []),
+		["create_decision", price.start ? CREATE_DECISION_WITH_PRICE : CREATE_DECISION],
 		["create_answer", price.answer ? CREATE_ANSWER_WITH_PRICE : CREATE_ANSWER_MEETING],
 		["get_decision", price.answer ? GET_DECISION_WITH_PRICE : GET_DECISION_MEETING],
 		["delete_decision", DELETE_DECISION],

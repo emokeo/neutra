@@ -30,15 +30,21 @@ app.route("/", WebAnswer);
 app.get("/r/:id", async (c) => {
 	const id = c.req.param("id");
 	const row = /^[a-z][a-z2-7]{25}$/.test(id)
-		? await c.env.DB.prepare("SELECT starter_name, stats_ref FROM decisions WHERE id = ?")
+		? await c.env.DB.prepare("SELECT starter_name, stats_ref, kind FROM decisions WHERE id = ?")
 				.bind(id)
-				.first<{ starter_name: string; stats_ref: string | null }>()
+				.first<{ starter_name: string; stats_ref: string | null; kind: "meeting" | "price" }>()
 		: null;
 	const agent = c.req.header("user-agent") ?? "";
 	if (row && !/bot|crawl|spider|preview|facebookexternalhit|whatsapp|slack|telegram|twitter|discord|linkedin|skype/i.test(agent)) {
 		c.executionCtx.waitUntil(recordEvent(c.env, { type: "handoff_opened", decisionRef: row.stats_ref }));
 	}
-	return requestPage(row?.starter_name ?? null, c.env.MCP_RESOURCE, /^[a-z][a-z2-7]{25}$/.test(id) ? id : "", c.req.query("bad") === "1");
+	return requestPage(
+		row?.starter_name ?? null,
+		c.env.MCP_RESOURCE,
+		/^[a-z][a-z2-7]{25}$/.test(id) ? id : "",
+		c.req.query("bad") === "1",
+		row?.kind === "price" ? "price" : "meeting",
+	);
 });
 
 // The code box on the steps page: someone who opened the wrong link pastes the code and goes to the answer page.

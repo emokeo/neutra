@@ -11,13 +11,15 @@ import {
 	deleteDecision,
 	getAnswer,
 	getDecision,
+	requestTerms,
 } from "./decisions";
 import { recordEvent } from "./events";
 import { createFeatureRequest, getFeatureRequest } from "./feedback";
 import { GoogleHandler } from "./google-handler";
 import { isAllowed } from "./utils";
-import { nextStep, SERVER_INSTRUCTIONS } from "./guidance";
+import { codeNextStep, nextStep, priceNextStep, serverInstructions, validateNextStep } from "./guidance";
 import { runMaintenance } from "./maintenance";
+import { canStartPrice, createPriceAnswer, createPriceDecision, priceMode } from "./price";
 
 // Who the caller is, from Google sign-in. Encrypted inside the auth token.
 export type Props = {
@@ -44,6 +46,39 @@ const AvailableWindows = z
 	.describe("Times this person can make it, together at least twice the meeting duration. Never shown to anyone else.");
 
 const DecisionName = z.string().describe('The decision\'s name, e.g. "decisions/abc..."');
+
+// A price limit: a string or a number. A union of two plain types is fine for strict clients (unions of objects are not).
+const Amount = z.union([z.string(), z.number()]);
+const MinimumToAccept = Amount.optional().describe(
+	'The lowest your person would accept, if they receive the money. Digits with an optional dot, e.g. "1850" or "1850.50".',
+);
+const MaximumToPay = Amount.optional().describe(
+	'The most your person would pay, if they pay. Digits with an optional dot, e.g. "1850" or "1850.50".',
+);
+const ValidateOnly = z
+	.boolean()
+	.optional()
+	.describe("Check the amount and get it back to read to your person, without sending or storing anything.");
+
+// Shared tools say more once price decisions are on; while the switch is off they read exactly as before.
+const MEETING_ONLY = {
+	answerTitle: "Answer a meeting-time request",
+	answerDescription:
+		"Use when your person pastes a Neutra message or a \"neutra:\" code. Takes that code and your person's free times. Neutra compares them privately. If a time fits both, it sends one calendar invite; otherwise, nobody learns anything about the other's times.",
+	getTitle: "Check a meeting-time decision",
+	getDescription: "Check a decision's status and meeting time.",
+};
+const WITH_PRICE = {
+	answerTitle: "Answer a Neutra request",
+	answerDescription:
+		"Answer a request from a forwarded Neutra message or \"neutra:\" code, with your person's free times or price limit. Neutra compares the two answers privately and reports only the result.",
+	getTitle: "Check a Neutra request",
+	getDescription: 'Read a request\'s terms and status, by its name or by a "neutra:" code. Never shows the other side\'s times or limit.',
+};
+
+function exactlyOne(values: unknown[], message: string): void {
+	if (values.filter((v) => v !== undefined).length !== 1) throw new ApiError("INVALID_ARGUMENT", message);
+}
 
 function ok(result: unknown) {
 	return { content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }] };
@@ -80,9 +115,16 @@ async function run(tool: string, caller: Caller | undefined, action: (caller: Ca
 }
 
 function createServer() {
-	const server = new McpServer({ name: "Neutra", version: "0.2.0" }, { instructions: SERVER_INSTRUCTIONS });
 	const props = getMcpAuthContext()?.props as Props | undefined;
 	const caller = props ? { email: props.email, name: props.name, client: props.client } : undefined;
+	// Anyone may answer a price request while the switch is on; starting one depends on who is asking.
+	const priceOn = priceMode(env) !== "off";
+	const priceStart = canStartPrice(env, caller?.email);
+	const texts = priceOn ? WITH_PRICE : MEETING_ONLY;
+	const server = new McpServer(
+		{ name: "Neutra", version: "0.2.0" },
+		{ instructions: serverInstructions({ answer: priceOn, start: priceStart }) },
+	);
 
 	server.registerTool(
 		"create_decision",
@@ -109,27 +151,102 @@ function createServer() {
 			}),
 	);
 
+	if (priceStart) {
+		server.registerTool(
+			"create_price_decision",
+			{
+				title: "Start agreeing on a price",
+				description:
+					"Agree a price with another person who also takes part, without either side seeing the other's limit. Send your person's limit and the terms; returns a message for them to forward.",
+				// One object with optional fields instead of a union: strict-schema clients handle unions badly.
+				inputSchema: z.object({
+					decision: z.object({
+						price: z.object({
+							subject: z.string().describe('What the price is for, 3 to 120 characters, shown to both sides, e.g. "Rent for the flat at Seestrasse 12"'),
+							details: z.string().optional().describe('Up to 200 characters, shown to both sides, e.g. "utilities included"'),
+							currency: z.string().describe('ISO 4217 code, e.g. "CHF"'),
+							unit: z.string().optional().describe('Up to 30 characters, e.g. "per month"'),
+							answerBy: z
+								.string()
+								.optional()
+								.describe('Last day to answer, "YYYY-MM-DD", 1 to 14 days ahead. Leave out for 14 days.'),
+						}),
+					}),
+					starterAnswer: z
+						.object({ price: z.object({ minimumToAccept: MinimumToAccept, maximumToPay: MaximumToPay }) })
+						.describe("Exactly one of minimumToAccept or maximumToPay. Never shown to anyone."),
+					validateOnly: ValidateOnly,
+				}),
+				annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+			},
+			async (request) =>
+				run("create_price_decision", caller, async (c) => {
+					const result = await createPriceDecision(env, c, {
+						price: request.decision.price,
+						starterAnswer: request.starterAnswer.price,
+						validateOnly: request.validateOnly,
+					});
+					if (result.validateOnly) {
+						return { receivedLimit: result.receivedLimit, terms: result.terms, nextStep: validateNextStep(result.receivedLimit) };
+					}
+					return { ...result, nextStep: priceNextStep("create_price_decision", result.decision) };
+				}),
+		);
+	}
+
 	server.registerTool(
 		"create_answer",
 		{
-			title: "Answer a meeting-time request",
-			description:
-				"Use when your person pastes a Neutra message or a \"neutra:\" code. Takes that code and your person's free times. Neutra compares them privately. If a time fits both, it sends one calendar invite; otherwise, nobody learns anything about the other's times.",
+			title: texts.answerTitle,
+			description: texts.answerDescription,
 			inputSchema: z.object({
 				parent: DecisionName.optional().describe("Not needed when code is the combined form"),
 				code: z.string().describe('The code from the forwarded message, usually the combined form "neutra:<id>.<code>"'),
-				answer: z.object({ meeting: z.object({ availableWindows: AvailableWindows, timeZone: TimeZone }) }),
+				answer: z
+					.object({
+						meeting: z.object({ availableWindows: AvailableWindows, timeZone: TimeZone }).optional(),
+						price: z
+							.object({ maximumToPay: MaximumToPay, minimumToAccept: MinimumToAccept })
+							.optional()
+							.describe("For a price request: exactly one, in the request's currency. get_decision with the code says which."),
+					})
+					.describe("Exactly one of meeting or price, matching the request."),
+				validateOnly: ValidateOnly.describe("Price answers only: check the amount and get it back to read to your person, without sending."),
 			}),
 			// Sends a calendar invite to both people when there is a match.
 			annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
 		},
 		async (request) =>
 			run("create_answer", caller, async (c) => {
+				const { meeting, price } = request.answer;
+				exactlyOne(
+					[meeting, price],
+					"Send exactly one of answer.meeting (free times) or answer.price (a price limit). get_decision with the code says which this request needs.",
+				);
+				if (price) {
+					const result = await createPriceAnswer(env, c, {
+						parent: request.parent,
+						code: request.code,
+						price,
+						validateOnly: request.validateOnly,
+					});
+					if (result.validateOnly) {
+						return { receivedLimit: result.receivedLimit, terms: result.terms, nextStep: validateNextStep(result.receivedLimit) };
+					}
+					return { ...result, nextStep: priceNextStep("create_answer", result.decision) };
+				}
+				if (request.validateOnly) {
+					throw new ApiError(
+						"INVALID_ARGUMENT",
+						"validateOnly is only for price answers. For a meeting, send the times without it: receivedWindows in the reply shows what Neutra understood.",
+					);
+				}
+				if (!meeting) throw new ApiError("INVALID_ARGUMENT", "Send answer.meeting with your person's free times.");
 				const result = await createAnswer(env, c, {
 					parent: request.parent,
 					code: request.code,
-					windows: request.answer.meeting.availableWindows,
-					timeZone: request.answer.meeting.timeZone,
+					windows: meeting.availableWindows,
+					timeZone: meeting.timeZone,
 				});
 				return { ...result, nextStep: nextStep("create_answer", result.decision, result.receivedWindows) };
 			}),
@@ -138,15 +255,27 @@ function createServer() {
 	server.registerTool(
 		"get_decision",
 		{
-			title: "Check a meeting-time decision",
-			description:
-				"Check a decision's status and meeting time.",
-			inputSchema: z.object({ name: DecisionName }),
+			title: texts.getTitle,
+			description: texts.getDescription,
+			inputSchema: z.object({
+				name: DecisionName.optional().describe('The decision\'s name, e.g. "decisions/abc...". Or send code instead.'),
+				code: z
+					.string()
+					.optional()
+					.describe('A "neutra:<id>.<code>" code from a forwarded message: shows what the request asks for, without answering it.'),
+			}),
+			// Only reads, by name or by code: a code is never bound or counted here.
 			annotations: { readOnlyHint: true, openWorldHint: false },
 		},
-		async ({ name }) =>
+		async ({ name, code }) =>
 			run("get_decision", caller, async (c) => {
-				const decision = await getDecision(env, c, name);
+				exactlyOne([name, code], "Send either name or code, not both.");
+				if (code !== undefined) {
+					const terms = await requestTerms(env, c, code);
+					return { ...terms, nextStep: codeNextStep(terms) };
+				}
+				const decision = await getDecision(env, c, name as string);
+				if ("kind" in decision) return { ...decision, nextStep: priceNextStep("get_decision", decision) };
 				return { ...decision, nextStep: nextStep("get_decision", decision) };
 			}),
 	);
@@ -241,7 +370,9 @@ function createServer() {
 		"answer_request",
 		{
 			title: "Answer a Neutra request",
-			description: "Answer a meeting-time request someone sent you through Neutra.",
+			description: priceOn
+				? "Answer a request someone sent you through Neutra: a meeting time or a price."
+				: "Answer a meeting-time request someone sent you through Neutra.",
 			argsSchema: z.object({
 				message: z.string().describe("The Neutra message you received"),
 			}),
@@ -252,7 +383,9 @@ function createServer() {
 					role: "user" as const,
 					content: {
 						type: "text" as const,
-						text: `Someone sent me this Neutra request:\n\n${message}\n\nAsk me when I'm free, or check my calendar if you can and confirm the times with me, then answer it with Neutra.`,
+						text: priceOn
+							? `Someone sent me this Neutra request:\n\n${message}\n\nCheck with Neutra what it asks for. For a meeting, ask me when I'm free, or check my calendar if you can and confirm the times with me. For a price, ask me for my number and read it back to me before sending. Then answer it with Neutra.`
+							: `Someone sent me this Neutra request:\n\n${message}\n\nAsk me when I'm free, or check my calendar if you can and confirm the times with me, then answer it with Neutra.`,
 					},
 				},
 			],

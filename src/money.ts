@@ -116,3 +116,23 @@ export function midpoint(minimum: number, maximum: number, currency: string): { 
 	}
 	return { deal: true, price };
 }
+
+/** The currency's short sign, e.g. "€" for EUR, "$" for USD, "CHF" for CHF. */
+function narrowSymbol(currency: string): string {
+	const parts = new Intl.NumberFormat("en", { style: "currency", currency, currencyDisplay: "narrowSymbol" }).formatToParts(1);
+	return parts.find((p) => p.type === "currency")?.value ?? currency;
+}
+
+/**
+ * A currency written into an amount that isn't the request's own ("EUR 1700" or "€1700" in a CHF request),
+ * or null. Answers are always in the request's currency, so this is worth saying plainly.
+ */
+export function otherCurrencyIn(text: string, currency: string): string | null {
+	const code = currency.toUpperCase();
+	const known = typeof Intl.supportedValuesOf === "function" ? Intl.supportedValuesOf("currency") : [];
+	for (const word of text.toUpperCase().match(/[A-Z]{3}/g) ?? []) {
+		if (word !== code && known.includes(word)) return word;
+	}
+	const sign = text.match(/[$€£¥₹₩₽₪₺₴₦₱฿]/)?.[0];
+	return sign && sign !== narrowSymbol(code) ? sign : null;
+}

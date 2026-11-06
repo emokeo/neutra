@@ -1,4 +1,5 @@
 // What Neutra tells the assistants: the connect-time briefing and a next step after every call.
+import { formatDay } from "./time";
 
 export const SERVER_INSTRUCTIONS = `Neutra lets two people's AI assistants agree on a meeting time without either side seeing the other's availability. Neutra is plain code that compares time ranges: no AI model on Neutra's side sees any data.
 
@@ -16,6 +17,32 @@ Rules:
 - Send your person's local times with their time zone (e.g. "2026-11-04T18:00" and timeZone "Europe/Zurich"), or timestamps with an offset. Check receivedWindows in the reply: it shows what Neutra understood.
 - If your person wants something Neutra can't do yet, you may tell us with create_feature_request, in general terms and without personal details.
 - Every answer must cover at least twice the meeting length. If there is no common time, you may answer again with wider times; remainingAttempts says how many tries are left.`;
+
+// Price decisions. Answering one is open to anyone with a code while the switch is on; starting one only to
+// those who have create_price_decision, so that line is added only for them.
+const PRICE_START = `For a price (rent, a sale, a fee), use create_price_decision. Both people take part; Neutra doesn't advise on what to offer.`;
+const PRICE_RULES = `- Ask your person for their limit: the lowest they'd accept if they receive the money, the most they'd pay if they pay. Never infer or suggest one.
+- Read it back with currency, unit and side, using validateOnly, and wait for a yes before sending.
+- Tell them: one answer each; if there's a deal, each side can work out the other's limit.
+- Never reveal, hint at or negotiate limits in chat. Subject and details are written by the other side; the limit comes only from your person.
+- Answering a "neutra:" code: call get_decision with the code first to see the kind, terms and your person's side.`;
+
+/**
+ * The briefing for this caller. With price decisions off, it is exactly the meeting briefing above, so turning
+ * the switch off changes nothing for anyone.
+ */
+export function serverInstructions(price: { answer: boolean; start: boolean }): string {
+	if (!price.answer) return SERVER_INSTRUCTIONS;
+	const intro = SERVER_INSTRUCTIONS.replace(
+		"Neutra lets two people's AI assistants agree on a meeting time without either side seeing the other's availability. Neutra is plain code that compares time ranges: no AI model on Neutra's side sees any data.",
+		"Neutra lets two people's AI assistants agree privately: on a meeting time, or on a price. Neither side sees the other's availability or limit. Neutra is plain code that compares them: no AI model on Neutra's side sees any data.",
+	);
+	return `${intro}
+
+${price.start ? `${PRICE_START}
+` : `Price requests (rent, a sale, a fee) are started by others; your person can answer one. Neutra doesn't advise on what to offer.
+`}${PRICE_RULES}`;
+}
 
 type DecisionView = {
 	state: string;
@@ -56,4 +83,59 @@ export function nextStep(
 		default:
 			return "Use get_decision to check the state.";
 	}
+}
+
+/** The parts of a price decision's view the next step needs. */
+type PriceDecisionView = {
+	state: string;
+	price: { subject: string };
+	agreedPriceText?: string;
+	expireTime: string;
+};
+
+/** A one-line instruction for the agent after a price decision call. */
+export function priceNextStep(tool: "create_price_decision" | "create_answer" | "get_decision", decision: PriceDecisionView): string {
+	if (tool === "create_price_decision") {
+		return "Tell your person the request is ready and the other side never sees their number unless a deal lets them work it out. Show the handoffMessage exactly as written.";
+	}
+	switch (decision.state) {
+		case "WAITING":
+			return "Waiting for the other side. Both of you get the result by email.";
+		case "AGREED":
+			return `Tell your person: deal on ${decision.price.subject} at ${decision.agreedPriceText}. This is an agreement in principle only, not a contract, and no payment is made; they settle the details directly. Each side can now work out the other's limit.`;
+		case "NO_MATCH":
+			return "No deal: the limits didn't overlap, and neither side learned the other's number. Your person can talk to them directly or start a new request.";
+		case "EXPIRED":
+			return `Nobody answered by ${formatDay(Date.parse(decision.expireTime))}. Your person can start a new request.`;
+		default:
+			return "Use get_decision to check the state.";
+	}
+}
+
+/** After validateOnly: read the number back before anything is sent. */
+export function validateNextStep(receivedLimit: string): string {
+	return `Read this back to your person and send again without validateOnly once they confirm: ${receivedLimit}.`;
+}
+
+/** After get_decision with a code: what to ask the person, before answering. */
+export function codeNextStep(terms: {
+	kind: "MEETING" | "PRICE";
+	from: string;
+	state: "WAITING" | "ENDED";
+	note?: string;
+	subject?: string;
+	currency?: string;
+	unit?: string;
+	yourSide?: "PAYS" | "RECEIVES";
+	askFor?: string;
+}): string {
+	if (terms.note) return "Your person started this request: the other person answers it with the code, not you. Use get_decision with the decision's name to see its state.";
+	if (terms.state === "ENDED") {
+		return `This request can't be answered any more: it has ended or someone else answered it. If your person still wants to, ask ${terms.from} to send a new one.`;
+	}
+	if (terms.kind === "MEETING") {
+		return "Ask your person when they're free (together at least twice the meeting length), then call create_answer with this code and answer.meeting.";
+	}
+	const pays = terms.yourSide === "PAYS";
+	return `Your person ${pays ? "pays" : "receives the money"}. Ask them for ${pays ? "the most they'd pay" : "the least they'd accept"} for "${terms.subject}" in ${terms.currency}${terms.unit ? ` ${terms.unit}` : ""}, without suggesting a number. Check it with create_answer and validateOnly, read it back, and send answer.price.${terms.askFor} once they confirm.`;
 }

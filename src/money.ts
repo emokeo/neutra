@@ -3,6 +3,9 @@
 // floating-point money: 0.1 + 0.2 must not decide a price.
 import { ApiError } from "./decisions";
 
+// Intl.supportedValuesOf exists in Workers and Node but not in this project's TypeScript lib, so type it here.
+const intl = Intl as typeof Intl & { supportedValuesOf?: (key: "currency") => string[] };
+
 /** The largest amount Neutra takes: 10^13 smallest units (e.g. 100 billion francs), well inside exact integers. */
 export const MAX_MINOR = 10 ** 13;
 
@@ -10,7 +13,7 @@ export const MAX_MINOR = 10 ** 13;
 export function currencyCode(value: string): string {
 	const code = value.trim().toUpperCase();
 	// Intl accepts any three letters as a currency, so check against the list it knows when it can.
-	const known = typeof Intl.supportedValuesOf === "function" ? Intl.supportedValuesOf("currency") : null;
+	const known = typeof intl.supportedValuesOf === "function" ? intl.supportedValuesOf("currency") : null;
 	if (!/^[A-Z]{3}$/.test(code) || (known && !known.includes(code))) {
 		throw new ApiError("INVALID_ARGUMENT", `"${value}" isn't an ISO 4217 currency code. Use e.g. "CHF", "EUR", "USD".`);
 	}
@@ -129,7 +132,7 @@ function narrowSymbol(currency: string): string {
  */
 export function otherCurrencyIn(text: string, currency: string): string | null {
 	const code = currency.toUpperCase();
-	const known = typeof Intl.supportedValuesOf === "function" ? Intl.supportedValuesOf("currency") : [];
+	const known = typeof intl.supportedValuesOf === "function" ? intl.supportedValuesOf("currency") : [];
 	for (const word of text.toUpperCase().match(/[A-Z]{3}/g) ?? []) {
 		if (word !== code && known.includes(word)) return word;
 	}

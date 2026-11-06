@@ -229,7 +229,7 @@ describe("answering a price request", () => {
 		await rejects(
 			createAnswer(env, ben, { code: d.combined, windows: [{ startTime: "2026-11-04T17:00:00Z", endTime: "2026-11-04T20:00:00Z" }] }),
 			"INVALID_ARGUMENT",
-			'This is a price request ("Rent for the flat at Seestrasse 12", CHF per month), not a meeting. Your person pays: ask them the most they\'d pay and send answer.price.maximumToPay. Not counted.',
+			'This is a price request ("Rent for the flat at Seestrasse 12", CHF per month), not a meeting. Your person pays: ask them the most they\'d pay and send answer.price.maximumToPay. Not counted as a try.',
 		);
 		expect(row()).toMatchObject({ state: "WAITING", attempts: 0, responder_email: null });
 
@@ -275,6 +275,12 @@ describe("answering a price request", () => {
 			"isn't a plain amount. Send digits with an optional dot, e.g. \"1850\" or \"1850.50\". Not counted.",
 		);
 		await rejects(createPriceAnswer(env, ben, { code: d.combined, price: { maximumToPay: "1700.555" } }), "INVALID_ARGUMENT", "Not counted.");
+		// A dot for thousands is never quietly read as decimals.
+		await rejects(
+			createPriceAnswer(env, ben, { code: d.combined, price: { maximumToPay: "1.700" } }),
+			"INVALID_ARGUMENT",
+			'CHF takes at most 2 decimals; got "1.700". If you meant 1700, send "1700". Not counted.',
+		);
 		expect(row()).toMatchObject({ state: "WAITING", attempts: 0 });
 	});
 
@@ -305,8 +311,12 @@ describe("answering a price request", () => {
 		}
 	});
 
-	it("allows 3 price answers per person per day, from anyone", async () => {
-		for (const minimum of ["100", "200", "300"]) {
+	it("allows 3 price answers per person per day, from anyone, even if a request is deleted", async () => {
+		const first = await annaLets("100");
+		await createPriceAnswer(env, ben, { code: first.combined, price: { maximumToPay: "50" } });
+		// Deleting a settled request removes its answer, but not from the count.
+		await deleteDecision(env, anna, first.name);
+		for (const minimum of ["200", "300"]) {
 			const d = await annaLets(minimum);
 			await createPriceAnswer(env, ben, { code: d.combined, price: { maximumToPay: "50" } });
 		}
@@ -318,6 +328,25 @@ describe("answering a price request", () => {
 			"3 price answers per day",
 		);
 		expect(error.reason).toBe("PRICE_ANSWER_LIMIT");
+		// A day later it's fine again.
+		vi.setSystemTime(new Date("2026-11-04T08:01:00Z"));
+		await createPriceAnswer(env, ben, { code: `neutra:${fourth.name.split("/")[1]}.${fourth.code}`, price: { maximumToPay: "50" } });
+	});
+
+	it("holds the daily limit when answers to different requests arrive at the same moment", async () => {
+		const requests = [];
+		for (const minimum of ["100", "200", "300", "400", "500"]) requests.push(await annaLets(minimum));
+		const results = await Promise.allSettled(
+			requests.map((d) => createPriceAnswer(env, ben, { code: d.combined, price: { maximumToPay: "50" } })),
+		);
+		expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(3);
+		expect(results.filter((r) => r.status === "rejected").map((r) => (r as PromiseRejectedResult).reason.reason)).toEqual([
+			"PRICE_ANSWER_LIMIT",
+			"PRICE_ANSWER_LIMIT",
+		]);
+		// The refused ones are still open, with their sealed limit.
+		const open = db.db.prepare("SELECT COUNT(*) AS n FROM decisions WHERE state = 'WAITING' AND limit_sealed IS NOT NULL").get() as { n: number };
+		expect(open.n).toBe(2);
 	});
 
 	it("keeps the result when the email fails, and the job sends it later", async () => {
@@ -384,7 +413,9 @@ describe("get_decision with a code", () => {
 		const terms = await requestTerms(env, eve, d.combined);
 		expect(terms.state).toBe("ENDED");
 		expect(JSON.stringify(terms)).not.toMatch(/AGREED|1,775|1775/);
-		await rejects(requestTerms(env, eve, `${d.combined.slice(0, -1)}a`), "PERMISSION_DENIED");
+		// The same code with its last character changed to a different one.
+		const last = d.combined.slice(-1);
+		await rejects(requestTerms(env, eve, `${d.combined.slice(0, -1)}${last === "a" ? "b" : "a"}`), "PERMISSION_DENIED");
 		await rejects(requestTerms(env, eve, d.code), "INVALID_ARGUMENT", "whole code");
 	});
 });

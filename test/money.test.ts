@@ -41,6 +41,11 @@ describe("parseAmount", () => {
 		expect(() => parseAmount("1500.50", "JPY")).toThrow('JPY takes no decimals; got "1500.50".');
 		expect(() => parseAmount("1850.505", "CHF")).toThrow("CHF takes at most 2 decimals");
 		expect(() => parseAmount(0.1 + 0.2, "CHF")).toThrow("CHF takes at most 2 decimals");
+		// Not even trailing zeros: "1.700" in francs most likely means one thousand seven hundred.
+		expect(() => parseAmount("1850.500", "CHF")).toThrow("CHF takes at most 2 decimals");
+		expect(() => parseAmount("1.700", "CHF")).toThrow('CHF takes at most 2 decimals; got "1.700". If you meant 1700, send "1700".');
+		expect(() => parseAmount("1.500", "JPY")).toThrow('JPY takes no decimals; got "1.500". If you meant 1500, send "1500".');
+		expect(parseAmount("1.700", "KWD")).toBe(1700);
 	});
 
 	it("caps amounts at 10^13 smallest units", () => {

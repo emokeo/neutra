@@ -25,6 +25,11 @@ export interface AnswerKind<Answer, Values> {
 	again: string;
 	/** For the starter who opened their own link. HTML. */
 	ownRequest: string;
+	/**
+	 * Only the person who answered may learn from the page how it went. Anyone else (signed out, or another
+	 * account) sees the same "This request has ended" whatever the outcome, and not even that someone answered.
+	 */
+	privateOutcome?: boolean;
 	/** A line above the form, e.g. how many tries are left. */
 	notice?(info: WebRequest): string | undefined;
 	/** The inputs, inside the shared form. */

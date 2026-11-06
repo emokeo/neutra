@@ -8,6 +8,7 @@ import { isValidTimeZone } from "./time";
 import { fetchUpstreamAuthToken, getUpstreamAuthorizeUrl, isAllowed } from "./utils";
 import type { AnswerKind } from "./web-kind";
 import { meetingKind } from "./web-meeting";
+import { priceMode } from "./price";
 import { confirmPage, esc, formPage, introPage, messagePage } from "./web-pages";
 import { priceKind } from "./web-price";
 import {
@@ -51,13 +52,22 @@ function networkZone(request: Request): string {
 	return zone && isValidTimeZone(zone) ? zone : "UTC";
 }
 
+/** While price requests are switched off, their links say so before anything else. */
+function priceOff(info: WebRequest): Response {
+	return messagePage(
+		"Price requests aren't available right now",
+		`<p>Ask ${esc(info.starterFirstName)} to agree on the price with you directly.</p>`,
+		503,
+	);
+}
+
 /** The page for a request that can't be answered (any more), or null if the form should show. */
 function stateGuard<A, V>(kind: AnswerKind<A, V>, info: WebRequest, signedIn: WebSession | null): Response | null {
 	const who = esc(info.starterFirstName);
 	if (info.viewer === "starter") {
 		return messagePage("This is your own request", `<p>${kind.ownRequest}</p>`);
 	}
-	if (info.viewer === "someone_else") {
+	if (info.viewer === "someone_else" && !kind.privateOutcome) {
 		return messagePage(
 			"Someone else already answered",
 			`<p>This request was answered with another Google account. ${kind.again}, ask ${who} to send a new request.</p>`,
@@ -117,6 +127,7 @@ WebAnswer.get("/a/:token", async (c) => {
 	const info = await webRequest(c.env, parsed.id, parsed.code, signedIn?.email);
 	if (!info) return notFound();
 	const expired = c.req.query("expired") === "1";
+	if (info.kind === "price" && priceMode(c.env) === "off") return priceOff(info);
 	return info.kind === "price"
 		? showRequest(priceKind, c.req.raw, info, signedIn, token, expired)
 		: showRequest(meetingKind, c.req.raw, info, signedIn, token, expired);
@@ -193,6 +204,7 @@ WebAnswer.post("/a/:token", async (c) => {
 	if (!signedIn) return c.redirect(`${back}?expired=1`, 303);
 	const info = await webRequest(c.env, parsed.id, parsed.code, signedIn.email);
 	if (!info) return notFound();
+	if (info.kind === "price" && priceMode(c.env) === "off") return priceOff(info);
 	return info.kind === "price"
 		? answerOrBack(priceKind, c.env, c.req.raw, info, signedIn, parsed, token, back)
 		: answerOrBack(meetingKind, c.env, c.req.raw, info, signedIn, parsed, token, back);

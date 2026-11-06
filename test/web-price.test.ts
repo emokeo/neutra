@@ -79,6 +79,11 @@ describe("typed amounts", () => {
 			expect(readTypedAmount(typed, "CHF")).toEqual({ minor: 170000 });
 		}
 		expect(readTypedAmount("1,700.50", "CHF")).toEqual({ minor: 170050 });
+		// A dot before groups of three is a thousands separator, unless the currency has three decimals.
+		expect(readTypedAmount("1.700", "CHF")).toEqual({ minor: 170000 });
+		expect(readTypedAmount("1.700.000", "CHF")).toEqual({ minor: 170000000 });
+		expect(readTypedAmount("1.700", "KWD")).toEqual({ minor: 1700 });
+		expect(readTypedAmount("1.70", "CHF")).toEqual({ minor: 170 });
 		expect(readTypedAmount("150 000", "JPY")).toEqual({ minor: 150000 });
 	});
 
@@ -197,6 +202,27 @@ describe("web answer page for a price", () => {
 		expect(html).not.toContain("1900");
 	});
 
+	it("shows the outcome only to the person who answered", async () => {
+		const deal = await start("1700");
+		const noDeal = await start("1900");
+		const ended = await start("1700");
+		await post(`/a/${deal}`, await as(ben), [["amount", "1850"], ["step", "send"]]);
+		await post(`/a/${noDeal}`, await as(ben), [["amount", "1800"], ["step", "send"]]);
+		vi.setSystemTime(new Date("2026-11-17T08:01:00Z"));
+		const eve = await as({ email: "eve@example.com", name: "Eve" });
+		const pages = [];
+		for (const token of [deal, noDeal, ended]) {
+			for (const cookie of [undefined, eve]) {
+				const html = await (await get(`/a/${token}`, cookie)).text();
+				pages.push(html.replace(new RegExp(token, "g"), "TOKEN"));
+			}
+		}
+		// Signed out or another account: the same page whether there was a deal, no deal, or no answer at all.
+		expect(new Set(pages).size).toBe(1);
+		expect(pages[0]).toContain("This request has ended");
+		expect(pages[0]).toContain("If you still want to agree on a price, ask Anna to send a new request.");
+	});
+
 	it("tells the starter it's their own request", async () => {
 		const token = await start();
 		expect(await (await get(`/a/${token}`, await as(anna))).text()).toContain("Send the link to the other person: they answer it, not you.");
@@ -205,6 +231,9 @@ describe("web answer page for a price", () => {
 	it("says so when price requests are switched off", async () => {
 		const token = await start();
 		env.PRICE_DECISIONS = "off";
+		const page = await get(`/a/${token}`, await as(ben));
+		expect(page.status).toBe(503);
+		expect(await page.text()).toContain("Price requests aren&#39;t available right now");
 		const res = await post(`/a/${token}`, await as(ben), [
 			["amount", "1800"],
 			["step", "send"],

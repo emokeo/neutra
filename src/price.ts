@@ -20,8 +20,8 @@ import {
 	same,
 	sha256,
 } from "./decisions";
-import { recordEvent } from "./events";
-import { checkCreateAnswer, checkCreateDecision, checkPriceAnswer } from "./limits";
+import { personId, recordEvent } from "./events";
+import { checkCreateAnswer, checkCreateDecision, checkPriceAnswer, LIMITS, PRICE_ANSWERS_TODAY, priceAnswerLimit } from "./limits";
 import { CLAUDE_DIRECTORY_URL } from "./links";
 import { currencyCode, formatAmount, midpoint, minorDigits, otherCurrencyIn, parseAmount, plainAmount } from "./money";
 import { sealLimit, unsealLimit } from "./seal";
@@ -224,7 +224,7 @@ export function notAMeeting(row: DecisionRow): string {
 	const side = other(terms.starterSide);
 	return `This is a price request ("${terms.subject}", ${currencyAndUnit(terms)}), not a meeting. Your person ${
 		side === "PAYS" ? "pays" : "receives the money"
-	}: ask them ${askFor(side)} and send answer.price.${fieldFor(side)}. Not counted.`;
+	}: ask them ${askFor(side)} and send answer.price.${fieldFor(side)}. Not counted as a try.`;
 }
 
 // ---- The message the starter forwards
@@ -482,18 +482,35 @@ export async function createPriceAnswer(
 	const claimId = randomId(16);
 	const owned = "EXISTS (SELECT 1 FROM decisions WHERE id = ? AND claim_id = ?)";
 
-	// Settles in one go: the one answer, the result, and the starter's sealed limit gone. Nothing outside
-	// Neutra happens before the result, so no in-between state is needed. The guard lets only one answer in.
+	const person = await personId(env, caller.email);
+	const dayAgo = iso(now - 24 * 60 * 60 * 1000);
+	const detail = {
+		kind: "price",
+		outcome: outcome.deal ? "agreed" : "no_match",
+		minutesSinceStart: Math.round((now - Date.parse(row.create_time)) / 60_000),
+	};
+
+	// Settles in one go: the one answer, the result, the starter's sealed limit gone, and the event that counts
+	// toward the daily limit. Nothing outside Neutra happens before the result, so no in-between state is needed.
+	// The guard lets only one answer in, and re-counts today's price answers inside the same write, so parallel
+	// answers to different requests can't get past the daily limit either.
 	const settled = await env.DB.batch([
 		env.DB.prepare(
-			"UPDATE decisions SET state = ?, agreed_minor = ?, limit_sealed = NULL, responder_email = ?, code_used = 1, attempts = attempts + 1, claim_id = ?, update_time = ? WHERE id = ? AND state = 'WAITING' AND code_used = 0 AND attempts = 0",
-		).bind(state, agreed, caller.email, claimId, iso(now), row.id),
+			`UPDATE decisions SET state = ?, agreed_minor = ?, limit_sealed = NULL, responder_email = ?, code_used = 1, attempts = attempts + 1, claim_id = ?, update_time = ?
+			 WHERE id = ? AND state = 'WAITING' AND code_used = 0 AND attempts = 0 AND (${PRICE_ANSWERS_TODAY}) < ?`,
+		).bind(state, agreed, caller.email, claimId, iso(now), row.id, person, dayAgo, LIMITS.priceAnswersPerDay),
 		env.DB.prepare(
 			`INSERT INTO answers (id, decision_id, author_email, author_name, role, windows_json, time_zone, create_time) SELECT ?, ?, ?, ?, 'RESPONDER', '[]', NULL, ? WHERE ${owned}`,
 		).bind(answerId, row.id, caller.email, caller.name, iso(now), row.id, claimId),
+		env.DB.prepare(
+			`INSERT INTO events (type, decision_ref, client, person, detail_json, create_time) SELECT 'answer_submitted', ?, ?, ?, ?, ? WHERE ${owned}`,
+		).bind(row.stats_ref, caller.client ?? "unknown", person, JSON.stringify(detail), iso(now), row.id, claimId),
 		env.DB.prepare("UPDATE decisions SET claim_id = NULL WHERE id = ? AND claim_id = ?").bind(row.id, claimId),
 	]);
 	if (settled[0].meta.changes !== 1) {
+		// Either someone answered first, or this person reached the daily limit in the meantime.
+		const current = await env.DB.prepare("SELECT state FROM decisions WHERE id = ?").bind(row.id).first<{ state: string }>();
+		if (current?.state === "WAITING") priceAnswerLimit();
 		throw new ApiError("FAILED_PRECONDITION", "This request has already been answered.");
 	}
 	const next: DecisionRow = {
@@ -506,17 +523,6 @@ export async function createPriceAnswer(
 		attempts: 1,
 		update_time: iso(now),
 	};
-	await recordEvent(env, {
-		type: "answer_submitted",
-		decisionRef: row.stats_ref,
-		client: caller.client,
-		email: caller.email,
-		detail: {
-			kind: "price",
-			outcome: outcome.deal ? "agreed" : "no_match",
-			minutesSinceStart: Math.round((now - Date.parse(row.create_time)) / 60_000),
-		},
-	});
 	const answers = await answersOf(env, row.id);
 	// The result email goes out now. If it fails, the result stands and the maintenance job tries again.
 	try {

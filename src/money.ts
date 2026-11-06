@@ -37,8 +37,9 @@ export function readPlainAmount(text: string, digits: number): { minor: number }
 	const m = /^(\d+)(?:\.(\d+))?$/.exec(text);
 	if (!m) return { problem: "FORMAT" };
 	const fraction = m[2] ?? "";
-	// "1850.50" in a currency with 2 decimals is fine; "1850.505" is not. Trailing zeros past the limit are fine too.
-	if (fraction.replace(/0+$/, "").length > digits) return { problem: "DECIMALS" };
+	// No more decimals than the currency has, not even zeros: "1.700" in francs is far likelier to mean
+	// one thousand seven hundred than 1.70, so it must not quietly become 1.70.
+	if (fraction.length > digits) return { problem: "DECIMALS" };
 	const whole = m[1].replace(/^0+(?=\d)/, "");
 	// More than 14 integer digits can't be under the limit; checking first keeps the numbers exact.
 	if (whole.length > 14) return { problem: "TOO_LARGE" };
@@ -63,13 +64,19 @@ export function parseAmount(value: string | number, currency: string): number {
 	if ("minor" in result) return result.minor;
 	const shown = typeof value === "number" ? String(value) : value;
 	switch (result.problem) {
-		case "DECIMALS":
+		case "DECIMALS": {
+			// A dot between groups of three is how many people write thousands.
+			const thousands = /^\d{1,3}(\.\d{3})+$/.test(text) ? text.replace(/\./g, "") : null;
+			const said = digits === 0 ? `${code} takes no decimals; got "${shown}".` : `${code} takes at most ${digits} decimals; got "${shown}".`;
 			throw new ApiError(
 				"INVALID_ARGUMENT",
-				digits === 0
-					? `${code} takes no decimals; got "${shown}". Send a whole amount, e.g. "1500".`
-					: `${code} takes at most ${digits} decimals; got "${shown}".`,
+				thousands
+					? `${said} If you meant ${thousands}, send "${thousands}".`
+					: digits === 0
+						? `${said} Send a whole amount, e.g. "1500".`
+						: said,
 			);
+		}
 		case "ZERO":
 			throw new ApiError("INVALID_ARGUMENT", `The amount must be more than 0; got "${shown}".`);
 		case "TOO_LARGE":

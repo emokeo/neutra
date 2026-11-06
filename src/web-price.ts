@@ -11,8 +11,8 @@ type PriceAnswer = { minor: number };
 type PriceValues = { amount: string };
 
 /**
- * Reads an amount the way people type it: 1'700, 1 700, 1,700 (a comma before exactly three digits
- * is a thousands separator), 1700.-, or with the request's currency, "CHF 1700". Anything else gets a
+ * Reads an amount the way people type it: 1'700, 1 700, 1,700 or 1.700 (a comma or dot before exactly three
+ * digits is a thousands separator), 1700.-, or with the request's currency, "CHF 1700". Anything else gets a
  * plain sentence on what to change.
  */
 export function readTypedAmount(typed: string, currency: string): { minor: number } | { error: string } {
@@ -23,10 +23,14 @@ export function readTypedAmount(typed: string, currency: string): { minor: numbe
 		.replace(new RegExp(`^${currency}\\s*|\\s*${currency}$`, "i"), "")
 		// The Swiss "1700.-" means a whole amount.
 		.replace(/\.[-–—]$/, "");
+	const digits = minorDigits(currency);
 	if (/^\d{1,3}(['’\s]\d{3})+(\.\d+)?$/.test(text)) text = text.replace(/['’\s]/g, "");
 	else if (/^\d{1,3}(,\d{3})+(\.\d+)?$/.test(text)) text = text.replace(/,/g, "");
+	// "1.700" or "1.700.000": dots between groups of three are thousands, as many people write them. Only where
+	// the currency has fewer than three decimals; in KWD "1.700" is a real amount. The confirm step shows the
+	// result ("CHF 1,700") before anything is sent.
+	else if (digits < 3 && /^\d{1,3}(\.\d{3})+$/.test(text)) text = text.replace(/\./g, "");
 	else if (/^\d+,\d+$/.test(text)) return { error: "Use a dot for decimals, e.g. 1700.50, and enter the amount again." };
-	const digits = minorDigits(currency);
 	const result = readPlainAmount(text, digits);
 	if ("minor" in result) return result;
 	switch (result.problem) {
@@ -82,6 +86,7 @@ export const priceKind: AnswerKind<PriceAnswer, PriceValues> = {
 	addressNote: "The result goes to this address.",
 	again: "If you still want to agree on a price",
 	ownRequest: "Send the link to the other person: they answer it, not you.",
+	privateOutcome: true,
 
 	form(info, values) {
 		const t = terms(info);
@@ -132,17 +137,16 @@ export const priceKind: AnswerKind<PriceAnswer, PriceValues> = {
 		return null;
 	},
 
+	// Only the person who answered sees the outcome here; for everyone else the shared page says the request ended.
 	result(info, signedIn) {
-		if (info.state === "AGREED") {
-			if (info.viewer === "responder" && signedIn && info.agreedPriceText) {
-				return messagePage(
-					"You have a deal",
-					`<p><strong>Deal: ${esc(info.agreedPriceText)} for ${esc(terms(info).subject)}.</strong></p><p>That's halfway between your two numbers. This isn't a contract: settle the details with ${who(info)} directly; you both got an email.</p>`,
-				);
-			}
-			return messagePage("This request has been answered", `<p>If you answered it, look for the email from neutra.invites@gmail.com.</p>`);
+		if (info.viewer !== "responder" || !signedIn) return null;
+		if (info.state === "AGREED" && info.agreedPriceText) {
+			return messagePage(
+				"You have a deal",
+				`<p><strong>Deal: ${esc(info.agreedPriceText)} for ${esc(terms(info).subject)}.</strong></p><p>That's halfway between your two numbers. This isn't a contract: settle the details with ${who(info)} directly; you both got an email.</p>`,
+			);
 		}
-		if (info.state === "NO_MATCH" && info.viewer === "responder") {
+		if (info.state === "NO_MATCH") {
 			return messagePage(
 				"No deal",
 				`<p>No deal: your numbers didn't overlap. Neither of you learns the other's number.</p><p>If you still want to agree, talk to ${who(info)} directly or ask for a new request.</p>`,

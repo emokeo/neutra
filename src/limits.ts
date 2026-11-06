@@ -47,14 +47,20 @@ export async function checkCreateAnswer(env: Env, email: string, starterEmail: s
 	}
 }
 
+/**
+ * Price answers count from the anonymous events, like the hourly limit: answer rows go when a decision is
+ * deleted, and deleting a settled request must not give the answer back.
+ */
+export const PRICE_ANSWERS_TODAY =
+	"SELECT COUNT(*) FROM events WHERE person = ? AND type = 'answer_submitted' AND json_extract(detail_json, '$.kind') = 'price' AND create_time > ?";
+
 export async function checkPriceAnswer(env: Env, email: string, now = Date.now()): Promise<void> {
-	const dayAgo = new Date(now - 24 * HOUR).toISOString();
-	const row = await env.DB.prepare(
-		"SELECT COUNT(*) AS n FROM answers a JOIN decisions d ON d.id = a.decision_id WHERE a.author_email = ? COLLATE NOCASE AND a.role = 'RESPONDER' AND d.kind = 'price' AND a.create_time > ?",
-	)
-		.bind(email, dayAgo)
+	const row = await env.DB.prepare(PRICE_ANSWERS_TODAY.replace("COUNT(*)", "COUNT(*) AS n"))
+		.bind(await personId(env, email), new Date(now - 24 * HOUR).toISOString())
 		.first<{ n: number }>();
-	if ((row?.n ?? 0) >= LIMITS.priceAnswersPerDay) {
-		tooMany(`${LIMITS.priceAnswersPerDay} price answers per day, so nobody can work out a person's number with many requests`, "PRICE_ANSWER_LIMIT");
-	}
+	if ((row?.n ?? 0) >= LIMITS.priceAnswersPerDay) priceAnswerLimit();
+}
+
+export function priceAnswerLimit(): never {
+	tooMany(`${LIMITS.priceAnswersPerDay} price answers per day, so nobody can work out a person's number with many requests`, "PRICE_ANSWER_LIMIT");
 }

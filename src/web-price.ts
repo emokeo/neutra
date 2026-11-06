@@ -8,8 +8,8 @@ import { formatDay } from "./time";
 import { type AnswerKind, limitError, who } from "./web-kind";
 import { esc, messagePage } from "./web-pages";
 
-// The end of a range that counts, and the range itself only to show it back on the confirm screen.
-type PriceAnswer = { minor: number; range?: { low: number; high: number } };
+// One number, or a range of which both ends count: a deal can only land inside it.
+type PriceAnswer = { minor: number } | { range: { low: number; high: number } };
 type PriceValues = { amount: string };
 
 /**
@@ -17,22 +17,18 @@ type PriceValues = { amount: string };
  * digits is a thousands separator), 1700.-, or with the request's currency, "CHF 1700". Anything else gets a
  * plain sentence on what to change.
  */
-export function readTypedAmount(
-	typed: string,
-	currency: string,
-	side: "PAYS" | "RECEIVES" = "PAYS",
-): { minor: number; range?: { low: number; high: number } } | { error: string } {
+export function readTypedAmount(typed: string, currency: string): PriceAnswer | { error: string } {
 	const text = typed.trim();
 	if (!text) return { error: "Enter an amount." };
 	if (otherCurrencyIn(text, currency)) return { error: `This request is in ${currency}. Enter just the number.` };
-	// A range, e.g. "10'000–20'000": each end read the same way; only the walk-away end counts.
+	// A range, e.g. "10'000–20'000": each end read the same way.
 	const ends = splitRange(text);
 	if (!ends) return readOneAmount(text, currency);
 	const [low, high] = ends.map((end) => readOneAmount(end, currency));
 	if ("error" in low) return low;
 	if ("error" in high) return high;
 	if (low.minor >= high.minor) return { error: "Enter the lower number first, e.g. 1700–1900, or just one number." };
-	return { minor: side === "PAYS" ? high.minor : low.minor, range: { low: low.minor, high: high.minor } };
+	return { range: { low: low.minor, high: high.minor } };
 }
 
 function readOneAmount(typed: string, currency: string): { minor: number } | { error: string } {
@@ -61,6 +57,13 @@ function readOneAmount(typed: string, currency: string): { minor: number } | { e
 		default:
 			return { error: "Enter the amount in digits, e.g. 1700 or 1700.50." };
 	}
+}
+
+/** "1900.00" or "1700.00-1900.00": what is sent, in the API's plain form. */
+function plainLimit(answer: PriceAnswer, currency: string): string {
+	return "range" in answer
+		? `${plainAmount(answer.range.low, currency)}-${plainAmount(answer.range.high, currency)}`
+		: plainAmount(answer.minor, currency);
 }
 
 function terms(info: WebRequest) {
@@ -132,21 +135,22 @@ export const priceKind: AnswerKind<PriceAnswer, PriceValues> = {
 	read(form, info) {
 		const typed = form.get("amount");
 		const amount = typeof typed === "string" ? typed.trim() : "";
-		const result = readTypedAmount(amount, terms(info).currency, terms(info).yourSide);
+		const result = readTypedAmount(amount, terms(info).currency);
 		if ("error" in result) return { error: result.error, values: { amount } };
-		return { answer: { minor: result.minor, ...(result.range ? { range: result.range } : {}) }, values: { amount } };
+		return { answer: result, values: { amount } };
 	},
 
 	confirm: (answer, info) => {
 		const t = terms(info);
+		const unit = t.unit ? ` ${t.unit}` : "";
 		return {
-			// For a range, say which end counts: the other one is not sent.
-			text: `${label(info)}: ${formatAmount(answer.minor, t.currency, t.unit)}${
-				answer.range
-					? ` (the ${pays(info) ? "top" : "bottom"} of ${formatNumber(answer.range.low, t.currency)}–${formatNumber(answer.range.high, t.currency)})`
-					: ""
-			}. You can't change it after sending.`,
-			hidden: { amount: plainAmount(answer.minor, t.currency) },
+			text:
+				"range" in answer
+					? `Your range: ${t.currency} ${formatNumber(answer.range.low, t.currency)}–${formatNumber(answer.range.high, t.currency)}${unit} (${
+							pays(info) ? "you pay" : "you receive"
+						}). A deal can only land inside it. You can't change it after sending.`
+					: `${label(info)}: ${formatAmount(answer.minor, t.currency, t.unit)}. You can't change it after sending.`,
+			hidden: { amount: plainLimit(answer, t.currency) },
 		};
 	},
 
@@ -154,7 +158,7 @@ export const priceKind: AnswerKind<PriceAnswer, PriceValues> = {
 	send: (env, caller, code, answer, info) =>
 		createPriceAnswer(env, caller, {
 			code,
-			price: { [pays(info) ? "maximumToPay" : "minimumToAccept"]: plainAmount(answer.minor, terms(info).currency) },
+			price: { [pays(info) ? "maximumToPay" : "minimumToAccept"]: plainLimit(answer, terms(info).currency) },
 		}),
 
 	failed(error, info) {

@@ -23,13 +23,23 @@ import {
 import { personId, recordEvent } from "./events";
 import { checkCreateAnswer, checkCreateDecision, checkPriceAnswer, LIMITS, PRICE_REQUESTS_TODAY, priceAnswerLimit } from "./limits";
 import { CLAUDE_DIRECTORY_URL } from "./links";
-import { currencyCode, formatAmount, formatNumber, minorDigits, otherCurrencyIn, parseAmount, parseLimit, plainAmount } from "./money";
+import {
+	currencyCode,
+	formatAmount,
+	formatNumber,
+	minorDigits,
+	otherCurrencyIn,
+	overlapOf,
+	parseAmount,
+	parseLimit,
+	plainAmount,
+	type PriceRange,
+} from "./money";
 import {
 	answersText,
 	dealPrice,
 	dealText,
 	defaultStep,
-	overlaps,
 	setsPrice,
 	MAX_PRICE_ANSWERS,
 	type Rule,
@@ -38,7 +48,7 @@ import {
 	type Side,
 	starterCaution,
 } from "./price-rules";
-import { sealLimit, unsealLimit } from "./seal";
+import { sealRange, unsealRange } from "./seal";
 import { formatDay } from "./time";
 import { isAllowed } from "./utils";
 
@@ -185,14 +195,16 @@ function deadline(answerBy: string | undefined, now: number): number {
 }
 
 /**
- * 'CHF 1,850 per month, the least you'd accept for "Rent"': worded to be read back to the person as it is.
- * For a range it says which end Neutra uses, and that the other end is gone.
+ * Worded to be read back to the person as it is: 'CHF 1,850 per month, the least you'd accept for "Rent"', or
+ * for a range 'Your range for "Rent": CHF 1,700–1,900 per month (you pay). A deal can only land inside it'.
  */
-function limitText(side: Side, minor: number, terms: PriceTerms, range?: { low: number; high: number }): string {
-	const used = `${formatAmount(minor, terms.currency, terms.unit)}, ${askFor(side, "you")} for "${subjectText(terms)}"`;
-	if (!range) return used;
-	const from = `${formatNumber(range.low, terms.currency)}–${formatNumber(range.high, terms.currency)}`;
-	return `From ${from} Neutra uses ${used}. The other end isn't used or stored`;
+function limitText(side: Side, limit: PriceRange & { isRange: boolean }, terms: PriceTerms): string {
+	if (!limit.isRange) {
+		const n = side === "PAYS" ? limit.high : limit.low;
+		return `${formatAmount(n, terms.currency, terms.unit)}, ${askFor(side, "you")} for "${subjectText(terms)}"`;
+	}
+	const range = `${terms.currency} ${formatNumber(limit.low, terms.currency)}–${formatNumber(limit.high, terms.currency)}${terms.unit ? ` ${terms.unit}` : ""}`;
+	return `Your range for "${subjectText(terms)}": ${range} (${side === "PAYS" ? "you pay" : "you receive"}). A deal can only land inside it`;
 }
 
 /** The deadline as a day, "2026-11-17" (UTC), as the starter set it. */
@@ -339,9 +351,11 @@ export async function createPriceDecision(
 		);
 	}
 	const starterSide: Side = maximumToPay !== undefined ? "PAYS" : "RECEIVES";
-	const { minor, range } = parseLimit((maximumToPay ?? minimumToAccept) as string | number, currency, starterSide);
+	const limit = parseLimit((maximumToPay ?? minimumToAccept) as string | number, currency, starterSide);
+	// The ends that are numbers the person gave (not 0 or "no limit"), for checking the terms don't show them.
+	const given = [limit.low, limit.high].filter((n) => n > 0 && Number.isFinite(n));
 	for (const [field, text] of [["subject", subject], ["details", details], ["unit", unit]] as const) {
-		if (text && mentionsLimit(text, minor, currency)) {
+		if (text && given.some((n) => mentionsLimit(text, n, currency))) {
 			throw new ApiError(
 				"INVALID_ARGUMENT",
 				`The ${field} contains your person's limit. The other side reads the ${field}, so leave the number out and send the limit only as starterAnswer.price.${fieldFor(starterSide)}.`,
@@ -365,7 +379,7 @@ export async function createPriceDecision(
 		rule === "MIDPOINT_ROUNDED"
 			? request.price.roundTo !== undefined
 				? parseAmount(request.price.roundTo, currency)
-				: defaultStep(minor, currency)
+				: defaultStep(starterSide === "PAYS" ? limit.high : limit.low, currency)
 			: undefined;
 	const terms: PriceTerms = {
 		subject,
@@ -377,7 +391,7 @@ export async function createPriceDecision(
 		maxAnswers,
 		...(roundTo ? { roundTo } : {}),
 	};
-	const receivedLimit = limitText(starterSide, minor, terms, range);
+	const receivedLimit = limitText(starterSide, limit, terms);
 	// Said to the starter, not stored: how the rule works for them, and whether several answers let the other side
 	// move their number between tries.
 	const warning = starterCaution(terms.rule, maxAnswers, starterSide);
@@ -394,7 +408,8 @@ export async function createPriceDecision(
 		id,
 		kind: "price",
 		terms_json: JSON.stringify(terms),
-		limit_sealed: await sealLimit(minor, code, id),
+		// Both ends, so a range keeps meaning what the starter said.
+		limit_sealed: await sealRange(limit, code, id),
 		agreed_minor: null,
 		starter_email: caller.email,
 		starter_name: caller.name,
@@ -525,31 +540,30 @@ export async function createPriceAnswer(
 	if (elsewhere) {
 		throw new ApiError("INVALID_ARGUMENT", `This request is in ${terms.currency}; send just the number, e.g. "1700". Not counted.`);
 	}
-	let minor: number;
-	let range: { low: number; high: number } | undefined;
+	let limit: PriceRange & { isRange: boolean };
 	try {
-		({ minor, range } = parseLimit(value, terms.currency, side));
+		limit = parseLimit(value, terms.currency, side);
 	} catch (error) {
 		notCounted(error);
 	}
 	await checkCreateAnswer(env, caller.email, row.starter_email, row.id, now);
 	await checkPriceAnswer(env, caller.email, row.stats_ref, now);
-	const receivedLimit = limitText(side, minor, terms, range);
+	const receivedLimit = limitText(side, limit, terms);
 	if (request.validateOnly) {
 		return { validateOnly: true as const, receivedLimit };
 	}
 
-	let starterLimit: number;
+	let starterRange: PriceRange;
 	try {
-		starterLimit = await unsealLimit(row.limit_sealed ?? "", code, row.id);
+		starterRange = await unsealRange(row.limit_sealed ?? "", code, row.id);
 	} catch (error) {
 		console.error("sealed limit unreadable", row.id, error);
 		throw new ApiError("FAILED_PRECONDITION", "This request can't be answered any more. Ask the person who sent it to start a new one.");
 	}
-	const [minimum, maximum] = side === "PAYS" ? [starterLimit, minor] : [minor, starterLimit];
-	// A deal when the numbers overlap; its price, if the rule sets one (OVERLAP_ONLY doesn't).
-	const deal = overlaps({ minimum, maximum });
-	const agreed = deal ? dealPrice(terms, { minimum, maximum }) : null;
+	// A deal when the two ranges meet; the rule then picks the price inside where they meet (OVERLAP_ONLY sets none).
+	const overlap = side === "PAYS" ? overlapOf(limit, starterRange) : overlapOf(starterRange, limit);
+	const deal = overlap !== null;
+	const agreed = overlap ? dealPrice(terms, overlap) : null;
 	const attempt = row.attempts + 1;
 	// No deal with tries left: the request stays open for this person, with the starter's sealed limit. The
 	// number just sent is not kept, as always. Only a deal or the last try settles it.

@@ -70,7 +70,7 @@ Two people agree on a price (rent, a sale, a fee) without either seeing the othe
 - The answering person's number is never stored, not even between tries. The starter's is encrypted with a key made from the request code (stored only as a hash) and cleared as soon as the request settles or ends.
 - `get_decision` with a `code` returns a `preview` of what a request asks for before answering (`yourSide` `PAYS`: send `maximumToPay`; `RECEIVES`: send `minimumToAccept`), without using it up.
 - Inputs and outputs follow the `neutra.v1` messages (proto3 JSON): every price field sits inside `price`, e.g. `decision.price.agreedPriceText`.
-- A limit may also be a range, e.g. `"10000-20000"`: Neutra uses the walk-away end (the top for `maximumToPay`, the bottom for `minimumToAccept`), says so in the read-back, and never keeps the other end.
+- A limit may also be a range, e.g. `"10000-20000"` (a pay band with a floor, a price with a ceiling). Both ends count: a deal needs the two sides' ranges to meet, and the rule picks the price inside where they meet. A single number leaves the far end open. An inner end can only work against its own side, so there is nothing to gain by exaggerating it. Both ends of the starter's range are sealed; the answering person's are never stored.
 - `validateOnly` on either call reads the number back for the person to confirm, without sending anything.
 - At most 3 price requests answered per person per day (all tries of one request count once).
 - Switched by `PRICE_DECISIONS` in `wrangler.jsonc`: `off` (nothing changes for anyone), `testers` (only `ALLOWED_EMAILS` get `decision.price` in `create_decision`; anyone with a code can answer) or `open`. See `docs/RUNBOOK.md`.

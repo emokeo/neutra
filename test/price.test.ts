@@ -183,10 +183,10 @@ Open until Tue 17 Nov.`);
 		);
 	});
 
-	it("takes a range and says which end it uses", async () => {
+	it("takes a range, and a deal lands only where both ranges meet", async () => {
 		const check = await createPriceDecision(env, anna, { price: rent, starterAnswer: { minimumToAccept: "1700 - 1900" }, validateOnly: true });
 		expect(check.receivedLimit).toBe(
-			'From 1,700–1,900 Neutra uses CHF 1,700 per month, the least you\'d accept for "Rent for the flat at Seestrasse 12 (utilities included)". The other end isn\'t used or stored',
+			'Your range for "Rent for the flat at Seestrasse 12 (utilities included)": CHF 1,700–1,900 per month (you receive). A deal can only land inside it',
 		);
 		await rejects(
 			createPriceDecision(env, anna, { price: rent, starterAnswer: { minimumToAccept: "1900-1700" } }),
@@ -194,12 +194,25 @@ Open until Tue 17 Nov.`);
 			"goes from high to low",
 		);
 		const d = await annaLets("1700-1900");
-		expect(JSON.stringify(row())).not.toContain("1900");
+		expect(JSON.stringify(row())).not.toMatch(/1700|1900/);
 		const answer = await createPriceAnswer(env, ben, { code: d.combined, price: { maximumToPay: "1500 to 1800" }, validateOnly: true });
-		expect(answer.receivedLimit).toContain("From 1,500–1,800 Neutra uses CHF 1,800 per month, the most you'd pay");
+		expect(answer.receivedLimit).toContain("CHF 1,500–1,800 per month (you pay). A deal can only land inside it");
 		const result = await createPriceAnswer(env, ben, { code: d.combined, price: { maximumToPay: "1500 to 1800" } });
-		// 1700 (the bottom of Anna's range) and 1800 (the top of Ben's): halfway is 1750.
+		// They meet from 1700 to 1800: halfway is 1750.
 		expect(result.decision).toMatchObject({ price: { agreedPriceText: "CHF 1,750 per month" } });
+
+		// Anna's ceiling below Ben's single maximum: the deal stays inside her range.
+		const capped = await annaLets("1700-1800");
+		const high = await createPriceDecision(env, anna, { price: { ...rent, rule: "HIGHEST" }, starterAnswer: { minimumToAccept: "1700-1800" } });
+		const highCode = (high as { decision: { code: string } }).decision.code;
+		expect((await createPriceAnswer(env, eve, { code: highCode, price: { maximumToPay: "2500" } })).decision).toMatchObject({
+			price: { agreedPriceText: "CHF 1,800 per month" },
+		});
+		// A payer's floor above the receiver's range: no deal.
+		const cleo = { email: "cleo@example.com", name: "Cleo" };
+		expect((await createPriceAnswer(env, cleo, { code: capped.combined, price: { maximumToPay: "1850-2000" } })).decision).toMatchObject({
+			state: "NO_MATCH",
+		});
 		await rejects(createPriceAnswer(env, eve, { code: (await annaLets()).combined, price: { maximumToPay: "1800-1800" } }), "INVALID_ARGUMENT", "Not counted.");
 	});
 
@@ -576,7 +589,9 @@ describe("rules", () => {
 
 	it("LOWEST: the deal is at the receiver's minimum, and the payer's number stays private", async () => {
 		const d = await start({ rule: "LOWEST" });
-		expect(d.decision.handoffMessage).toContain("If your number reaches Anna's, you pay Anna's minimum, never more. Anna never learns your number.");
+		expect(d.decision.handoffMessage).toContain(
+			"If your number reaches Anna's, you pay the lowest price you both accept, never more than your number. Anna never learns how high you'd go.",
+		);
 		const result = await createPriceAnswer(env, ben, { code: d.decision.code as string, price: { maximumToPay: "1850" } });
 		expect(result.decision).toMatchObject({ state: "AGREED", price: { rule: "LOWEST", agreedPriceText: "CHF 1,700 per month" } });
 		expect(google.emails[0].raw).toContain("at CHF 1,700 per month (the lowest price you both accept).");
@@ -585,7 +600,7 @@ describe("rules", () => {
 
 	it("HIGHEST: the deal is at the payer's maximum, and the receiver's number stays private", async () => {
 		const d = await start({ rule: "HIGHEST" });
-		expect(d.decision.handoffMessage).toContain("you pay exactly the number you give. Give your real maximum only if you're happy to pay it.");
+		expect(d.decision.handoffMessage).toContain("you pay the highest price you both accept, which can be exactly your number. Give your real maximum only if you're happy to pay it.");
 		const result = await createPriceAnswer(env, ben, { code: d.decision.code as string, price: { maximumToPay: "1850" } });
 		expect(result.decision).toMatchObject({ price: { agreedPriceText: "CHF 1,850 per month" } });
 		expect(google.emails[0].raw).toContain("(the highest price you both accept)");

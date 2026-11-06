@@ -26,13 +26,13 @@ const MinimumToAccept = z
 	.string()
 	.optional()
 	.describe(
-		'The lowest your person would accept, if they receive the money: a number, or a range like "10000-20000" (Neutra uses the least they\'d accept, the low end). Digits with an optional dot, as a string, e.g. "1850".',
+		'The lowest your person would accept, if they receive the money: a number, or a range like "10000-20000" if they also have a ceiling: a deal can only land inside it. Digits with an optional dot, as a string, e.g. "1850".',
 	);
 const MaximumToPay = z
 	.string()
 	.optional()
 	.describe(
-		'The most your person would pay, if they pay: a number, or a range like "10000-20000" (Neutra uses the most they\'d pay, the high end). Digits with an optional dot, as a string, e.g. "1850".',
+		'The most your person would pay, if they pay: a number, or a range like "10000-20000" if they also have a floor (e.g. a pay band): a deal can only land inside it. Digits with an optional dot, as a string, e.g. "1850".',
 	);
 const ValidateOnly = z.boolean().optional();
 

@@ -49,7 +49,9 @@ export const MAX_PRICE_ANSWERS = 3;
  * LOWEST: the receiver's minimum, the lowest price in the overlap. The payer learns it; the payer's number stays private.
  * HIGHEST: the payer's maximum, the highest price in the overlap. The receiver learns it; the receiver's stays private.
  * OVERLAP_ONLY: no price at all, also when the numbers overlap (null). Whether they overlap is the whole result,
- * so neither number ever shows: see overlaps().
+ * so neither number ever shows.
+ * minimum and maximum are the ends of where the two sides' ranges meet (see overlapOf in money.ts); for two single
+ * numbers, the receiver's minimum and the payer's maximum.
  */
 export function dealPrice(
 	t: RuleTerms,
@@ -79,11 +81,6 @@ export function dealPrice(
 	return half;
 }
 
-/** Whether there is a deal (for OVERLAP_ONLY: whether the numbers overlap). The same condition for every rule. */
-export function overlaps(p: { minimum: number; maximum: number }): boolean {
-	return p.maximum >= p.minimum;
-}
-
 /** Whether a deal under this rule has a price. */
 export function setsPrice(rule: Rule): boolean {
 	return rule !== "OVERLAP_ONLY";
@@ -110,14 +107,16 @@ export function ruleText(t: RuleTerms, side: Side, other: string): string {
 	if (rule === "MIDPOINT") {
 		return "If your number reaches theirs, the price is halfway between them. You can then each work out the other's number.";
 	}
+	// Worded for single numbers and ranges alike: "the lowest price you both accept" is the receiver's minimum for
+	// single numbers, and the low end of where two ranges meet.
 	if (ownNumberIsPrice) {
 		return pays
-			? `If your number reaches ${other}'s, you pay exactly the number you give. Give your real maximum only if you're happy to pay it. ${other}'s number stays private.`
-			: `If your number reaches ${other}'s, you get exactly the number you give. Give your real minimum only if you're happy to get just that. ${other}'s number stays private.`;
+			? `If your number reaches ${other}'s, you pay the highest price you both accept, which can be exactly your number. Give your real maximum only if you're happy to pay it. ${other}'s lowest price stays private.`
+			: `If your number reaches ${other}'s, you get the lowest price you both accept, which can be exactly your number. Give your real minimum only if you're happy to get just that. ${other}'s highest price stays private.`;
 	}
 	return pays
-		? `If your number reaches ${other}'s, you pay ${other}'s minimum, never more. ${other} never learns your number.`
-		: `If your number reaches ${other}'s, you get ${other}'s maximum, never less. ${other} never learns your number.`;
+		? `If your number reaches ${other}'s, you pay the lowest price you both accept, never more than your number. ${other} never learns how high you'd go.`
+		: `If your number reaches ${other}'s, you get the highest price you both accept, never less than your number. ${other} never learns how low you'd go.`;
 }
 
 /** How many answers the person answering has, said to them. */

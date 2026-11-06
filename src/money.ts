@@ -161,17 +161,20 @@ export function formatNumber(minor: number, currency: string): string {
 	return formatAmount(minor, currency).replace(/^[A-Z]{3} /, "");
 }
 
+/** What one side will accept, in smallest units. high is Infinity when there is no upper end. */
+export type PriceRange = { low: number; high: number };
+
 /**
- * A limit an assistant sent: one amount, or a range of which Neutra keeps only the walk-away end, the high end
- * for the most someone would pay, the low end for the least they'd accept. The other end is never kept.
+ * A side's number as a range. A single number is open on the far side: the most someone would pay is
+ * [0, max], the least someone would accept is [min, no limit]. A range "from-to" closes both ends; the field it
+ * comes in still says which side it is. Reversed or equal-ended ranges are refused (one number says the same).
  */
-export function parseLimit(
-	value: string | number,
-	currency: string,
-	side: "PAYS" | "RECEIVES",
-): { minor: number; range?: { low: number; high: number } } {
+export function parseLimit(value: string | number, currency: string, side: "PAYS" | "RECEIVES"): PriceRange & { isRange: boolean } {
 	const ends = typeof value === "string" ? splitRange(value) : null;
-	if (!ends) return { minor: parseAmount(value, currency) };
+	if (!ends) {
+		const n = parseAmount(value, currency);
+		return side === "PAYS" ? { low: 0, high: n, isRange: false } : { low: n, high: Infinity, isRange: false };
+	}
 	const [low, high] = ends.map((end) => parseAmount(end, currency));
 	if (low >= high) {
 		throw new ApiError(
@@ -179,5 +182,18 @@ export function parseLimit(
 			`The range "${value}" ${low === high ? "has the same number at both ends" : "goes from high to low"}. Send the lower number first, e.g. "10000-20000", or one number.`,
 		);
 	}
-	return { minor: side === "PAYS" ? high : low, range: { low, high } };
+	return { low, high, isRange: true };
+}
+
+/**
+ * Where two sides' ranges meet, or null when they don't: a deal is possible exactly there.
+ * Why both ends of a range are safe to use: an inner end (the payer's low end, the receiver's high end) can only
+ * shrink the overlap against its own side. A payer's floor can only raise the price they pay, a receiver's ceiling
+ * can only lower what they get, so nobody gains by exaggerating one. It lets people say real constraints, like the
+ * floor of an employer's pay band.
+ */
+export function overlapOf(payer: PriceRange, receiver: PriceRange): { minimum: number; maximum: number } | null {
+	const minimum = Math.max(receiver.low, payer.low);
+	const maximum = Math.min(receiver.high, payer.high);
+	return minimum <= maximum ? { minimum, maximum } : null;
 }

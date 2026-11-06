@@ -88,11 +88,11 @@ describe("typed amounts", () => {
 		expect(readTypedAmount("150 000", "JPY")).toEqual({ minor: 150000 });
 	});
 
-	it("reads ranges, keeping the end that counts", () => {
-		expect(readTypedAmount("10'000–20'000", "CHF", "PAYS")).toEqual({ minor: 2000000, range: { low: 1000000, high: 2000000 } });
-		expect(readTypedAmount("CHF 10,000 to 20,000", "CHF", "RECEIVES")).toEqual({ minor: 1000000, range: { low: 1000000, high: 2000000 } });
-		expect(readTypedAmount("20000-10000", "CHF", "PAYS")).toEqual({ error: "Enter the lower number first, e.g. 1700–1900, or just one number." });
-		expect(readTypedAmount("1700.-", "CHF", "PAYS")).toEqual({ minor: 170000 });
+	it("reads ranges, keeping both ends", () => {
+		expect(readTypedAmount("10'000–20'000", "CHF")).toEqual({ range: { low: 1000000, high: 2000000 } });
+		expect(readTypedAmount("CHF 10,000 to 20,000", "CHF")).toEqual({ range: { low: 1000000, high: 2000000 } });
+		expect(readTypedAmount("20000-10000", "CHF")).toEqual({ error: "Enter the lower number first, e.g. 1700–1900, or just one number." });
+		expect(readTypedAmount("1700.-", "CHF")).toEqual({ minor: 170000 });
 	});
 
 	it("asks for a dot when a comma marks the decimals", () => {
@@ -149,15 +149,17 @@ describe("web answer page for a price", () => {
 		expect(google.emails).toHaveLength(0);
 	});
 
-	it("says on the confirm screen which end of a range counts", async () => {
+	it("shows a range on the confirm screen, and sends both ends", async () => {
 		const token = await start();
 		const res = await post(`/a/${token}`, await as(ben), [
 			["amount", "1'700–1'900"],
 			["step", "confirm"],
 		]);
 		const html = await res.text();
-		expect(html).toContain("The most you&#39;d pay: CHF 1,900 per month (the top of 1,700–1,900). You can&#39;t change it after sending.");
-		expect(html).toContain('<input type="hidden" name="amount" value="1900.00">');
+		expect(html).toContain("Your range: CHF 1,700–1,900 per month (you pay). A deal can only land inside it. You can&#39;t change it after sending.");
+		expect(html).toContain('<input type="hidden" name="amount" value="1700.00-1900.00">');
+		await post(`/a/${token}`, await as(ben), [["amount", "1700.00-1900.00"], ["step", "send"]]);
+		expect(state()).toBe("AGREED");
 	});
 
 	it("goes back to the form, with the amount, to change it", async () => {
@@ -252,7 +254,7 @@ describe("web answer page for a price", () => {
 		const cookie = await as(ben);
 		const form = await (await get(`/a/${token}`, cookie)).text();
 		expect(form).toContain("You have 2 answers.");
-		expect(form).toContain("you pay Anna&#39;s minimum, never more. Anna never learns your number.");
+		expect(form).toContain("you pay the lowest price you both accept, never more than your number. Anna never learns how high you&#39;d go.");
 		await post(`/a/${token}`, cookie, [["amount", "1600"], ["step", "send"]]);
 		const again = await (await get(`/a/${token}`, cookie)).text();
 		expect(again).toContain("No deal yet: your number didn&#39;t reach theirs. 1 answer left.");

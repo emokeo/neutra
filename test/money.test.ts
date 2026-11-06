@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatAmount, midpoint, minorDigits, parseAmount, parseLimit, plainAmount, splitRange } from "../src/money";
+import { formatAmount, midpoint, minorDigits, overlapOf, parseAmount, parseLimit, plainAmount, splitRange } from "../src/money";
 import { sealLimit, unsealLimit } from "../src/seal";
 
 describe("currencies", () => {
@@ -64,10 +64,28 @@ describe("ranges", () => {
 		expect(splitRange("-5")).toBeNull();
 	});
 
-	it("keep only the walk-away end: the top for the payer, the bottom for the receiver", () => {
-		expect(parseLimit("10000-20000", "CHF", "PAYS")).toEqual({ minor: 2000000, range: { low: 1000000, high: 2000000 } });
-		expect(parseLimit("10000 to 20000", "CHF", "RECEIVES")).toEqual({ minor: 1000000, range: { low: 1000000, high: 2000000 } });
-		expect(parseLimit("1850", "CHF", "PAYS")).toEqual({ minor: 185000 });
+	it("keep both ends; a single number leaves the far end open", () => {
+		expect(parseLimit("10000-20000", "CHF", "PAYS")).toEqual({ low: 1000000, high: 2000000, isRange: true });
+		expect(parseLimit("10000 to 20000", "CHF", "RECEIVES")).toEqual({ low: 1000000, high: 2000000, isRange: true });
+		expect(parseLimit("1850", "CHF", "PAYS")).toEqual({ low: 0, high: 185000, isRange: false });
+		expect(parseLimit("1850", "CHF", "RECEIVES")).toEqual({ low: 185000, high: Infinity, isRange: false });
+	});
+
+	it("meet where both sides accept, or not at all", () => {
+		const payer = (low: number, high: number) => ({ low, high });
+		// Single numbers: from the receiver's minimum to the payer's maximum, as before.
+		expect(overlapOf(payer(0, 1850), payer(1700, Infinity))).toEqual({ minimum: 1700, maximum: 1850 });
+		expect(overlapOf(payer(0, 1600), payer(1700, Infinity))).toBeNull();
+		// Nested: the payer's band lies inside the receiver's.
+		expect(overlapOf(payer(1750, 1800), payer(1700, 1900))).toEqual({ minimum: 1750, maximum: 1800 });
+		// Touching ends: a deal at exactly that price.
+		expect(overlapOf(payer(1500, 1700), payer(1700, 1900))).toEqual({ minimum: 1700, maximum: 1700 });
+		// The payer's floor above the receiver's minimum raises the low end.
+		expect(overlapOf(payer(1800, 2000), payer(1700, Infinity))).toEqual({ minimum: 1800, maximum: 2000 });
+		// The receiver's ceiling below the payer's maximum lowers the high end.
+		expect(overlapOf(payer(0, 2000), payer(1700, 1900))).toEqual({ minimum: 1700, maximum: 1900 });
+		// Disjoint.
+		expect(overlapOf(payer(2000, 2100), payer(1700, 1900))).toBeNull();
 	});
 
 	it("are refused when reversed or equal, or when an end isn't a plain amount", () => {

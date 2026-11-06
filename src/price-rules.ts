@@ -7,7 +7,7 @@ import { formatAmount, midpoint, minorDigits } from "./money";
 /** Who pays: the starter picks their side, the other person gets the opposite. */
 export type Side = "PAYS" | "RECEIVES";
 
-export const RULES = ["MIDPOINT", "LOWEST", "HIGHEST", "MIDPOINT_ROUNDED", "RANDOM"] as const;
+export const RULES = ["MIDPOINT", "LOWEST", "HIGHEST", "MIDPOINT_ROUNDED", "RANDOM", "OVERLAP_ONLY"] as const;
 export type Rule = (typeof RULES)[number];
 
 /** What a rule needs to know about the request: the rule, the currency, and the step for MIDPOINT_ROUNDED. */
@@ -48,6 +48,8 @@ export const MAX_PRICE_ANSWERS = 3;
  * MIDPOINT: halfway between the two numbers, so a deal lets each side work out the other's.
  * LOWEST: the receiver's minimum, the lowest price in the overlap. The payer learns it; the payer's number stays private.
  * HIGHEST: the payer's maximum, the highest price in the overlap. The receiver learns it; the receiver's stays private.
+ * OVERLAP_ONLY: no price at all, also when the numbers overlap (null). Whether they overlap is the whole result,
+ * so neither number ever shows: see overlaps().
  */
 export function dealPrice(
 	t: RuleTerms,
@@ -55,7 +57,7 @@ export function dealPrice(
 	randomBelow: RandomBelow = cryptoRandomBelow,
 ): number | null {
 	const { minimum, maximum } = p;
-	if (maximum < minimum) return null;
+	if (maximum < minimum || t.rule === "OVERLAP_ONLY") return null;
 	if (t.rule === "LOWEST") return minimum;
 	if (t.rule === "HIGHEST") return maximum;
 	if (t.rule === "RANDOM") {
@@ -77,6 +79,16 @@ export function dealPrice(
 	return half;
 }
 
+/** Whether there is a deal (for OVERLAP_ONLY: whether the numbers overlap). The same condition for every rule. */
+export function overlaps(p: { minimum: number; maximum: number }): boolean {
+	return p.maximum >= p.minimum;
+}
+
+/** Whether a deal under this rule has a price. */
+export function setsPrice(rule: Rule): boolean {
+	return rule !== "OVERLAP_ONLY";
+}
+
 /**
  * How the rule works, said to one side (side is the reader's; other is the other side's name, e.g. "Anna" or
  * "the other side"). Says what a deal costs or brings the reader, and whose number a deal reveals.
@@ -86,6 +98,9 @@ export function ruleText(t: RuleTerms, side: Side, other: string): string {
 	const pays = side === "PAYS";
 	if (rule === "MIDPOINT_ROUNDED") {
 		return `If your number reaches theirs, the price is halfway between them, rounded to ${stepText(t)}. You can each work out the other's number only roughly.`;
+	}
+	if (rule === "OVERLAP_ONLY") {
+		return "Neutra only tells you both whether your numbers overlap. No price is set, and neither of you learns the other's number.";
 	}
 	if (rule === "RANDOM") {
 		return "If your number reaches theirs, the price is a random point between the two numbers. Each of you learns only that the other's number is beyond the price.";
@@ -118,6 +133,7 @@ export function dealText(t: RuleTerms): string {
 	if (t.rule === "HIGHEST") return "the highest price you both accept";
 	if (t.rule === "MIDPOINT_ROUNDED") return `halfway, rounded to ${stepText(t)}`;
 	if (t.rule === "RANDOM") return "a random point between your numbers";
+	if (t.rule === "OVERLAP_ONLY") return "no price set: your numbers overlap";
 	return "halfway between your numbers";
 }
 
@@ -132,6 +148,10 @@ function stepText(t: RuleTerms): string {
  */
 export function starterCaution(rule: Rule, maxAnswers: number, starterSide: Side): string | undefined {
 	if (maxAnswers === 1) return undefined;
+	if (rule === "OVERLAP_ONLY") {
+		// No price to move, but every "don't overlap" still tells the other side which side of your number theirs fell.
+		return "With more than one answer, each \"don't overlap\" tells the other side that your number is beyond the one they sent, so they can narrow it down.";
+	}
 	const responderPays = starterSide === "RECEIVES";
 	// Under the halfway and random rules both numbers move the price; under LOWEST or HIGHEST only one side's does.
 	const theirNumberCounts =

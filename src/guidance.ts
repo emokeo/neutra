@@ -8,6 +8,7 @@ const REVEALS: Record<Rule, string> = {
 	LOWEST: "The paying side now knows the receiver's number; the payer's stays private.",
 	HIGHEST: "The receiving side now knows the payer's number; the receiver's stays private.",
 	RANDOM: "Each side learns only that the other's number is beyond the price.",
+	OVERLAP_ONLY: "Neither side learned the other's number.",
 };
 import { formatDay } from "./time";
 
@@ -31,7 +32,7 @@ Rules:
 // Price decisions. Answering one is open to anyone with a code while the switch is on; starting one only to
 // those whose create_decision takes decision.price, so that line is added only for them.
 const PRICE_START = `For a price (rent, a sale, a fee), use create_decision with decision.price and starterAnswer.price. Both people take part; Neutra doesn't advise on what to offer.
-- decision.price.rule, where in the overlap a deal lands: MIDPOINT (default) halfway, so each side can then work out the other's number; LOWEST at the receiver's minimum (favors the payer, whose number stays private); HIGHEST at the payer's maximum (favors the receiver, whose number stays private).
+- decision.price.rule, where in the overlap a deal lands: MIDPOINT (default) halfway, so each side can then work out the other's number; LOWEST at the receiver's minimum (favors the payer, whose number stays private); HIGHEST at the payer's maximum (favors the receiver, whose number stays private); MIDPOINT_ROUNDED halfway, rounded to roundTo; RANDOM at a random point in the overlap; OVERLAP_ONLY sets no price and says only whether the numbers overlap (good for salaries and early screening).
 - decision.price.maxAnswers: how many numbers the other side may send, 1 (default) to 3. Where their own number can set the price, more answers let them move it between tries: Neutra's nextStep says when.`;
 const PRICE_RULES = `- Ask your person for their limit: the lowest they'd accept if they receive the money, the most they'd pay if they pay. Never infer or suggest one.
 - Read it back with currency, unit and side, using validateOnly, and wait for a yes before sending.
@@ -124,8 +125,14 @@ export function priceNextStep(
 					} left. Your person may send another number with create_answer, or stop here. Don't suggest a number.`
 				: "Waiting for the other side. Both of you get the result by email.";
 		case "AGREED":
+			if (rule === "OVERLAP_ONLY") {
+				return `Tell your person: your numbers overlap for ${decision.price.subject}: worth talking. Neutra set no price; they agree on it together, directly. Neither side learned the other's number.`;
+			}
 			return `Tell your person: deal on ${decision.price.subject} at ${decision.price.agreedPriceText}. This is an agreement in principle only, not a contract, and no payment is made; they settle the details directly. ${REVEALS[rule as Rule] ?? REVEALS.MIDPOINT}`;
 		case "NO_MATCH":
+			if (rule === "OVERLAP_ONLY") {
+				return "Tell your person: your numbers don't overlap. Neither side learned the other's number. Your person can talk to them directly or start a new request.";
+			}
 			return "No deal: the limits didn't overlap, and neither side learned the other's number. Your person can talk to them directly or start a new request.";
 		case "EXPIRED":
 			return `The request ended on ${formatDay(Date.parse(decision.expireTime))} without a deal. Your person can start a new request.`;

@@ -599,8 +599,42 @@ describe("rules", () => {
 		expect(google.emails[0].raw).toContain("(a random point between your numbers)");
 	});
 
+	it("OVERLAP_ONLY: says only whether the numbers overlap, with no price and no number shown", async () => {
+		const d = await start({ rule: "OVERLAP_ONLY" });
+		const text = "Neutra only tells you both whether your numbers overlap. No price is set, and neither of you learns the other's number.";
+		expect(d.decision.handoffMessage).toContain(text);
+		expect(d.decision.handoffMessage).not.toContain('you both hear only "no deal"');
+		expect((await requestPreview(env, ben, d.decision.code as string)).preview.price?.ruleText).toBe(text);
+		const result = await createPriceAnswer(env, ben, { code: d.decision.code as string, price: { maximumToPay: "1850" } });
+		expect(result.decision).toMatchObject({ state: "AGREED", price: { rule: "OVERLAP_ONLY" } });
+		expect(result.decision?.price).not.toHaveProperty("agreedPrice");
+		expect(result.decision?.price).not.toHaveProperty("agreedPriceText");
+		expect(row()).toMatchObject({ state: "AGREED", agreed_minor: null, limit_sealed: null });
+		expect(priceNextStep("create_answer", result.decision!)).toContain("your numbers overlap for Rent for the flat at Seestrasse 12: worth talking.");
+		const email = google.emails[0].raw;
+		expect(email).toContain(
+			"Your numbers overlap for Rent for the flat at Seestrasse 12 (utilities included): worth talking. Neutra set no price; agree on it together.",
+		);
+		expect(email).not.toMatch(/1,700|1,850|1700|1850/);
+
+		const other = await start({ rule: "OVERLAP_ONLY" }, "1900");
+		await createPriceAnswer(env, eve, { code: other.decision.code as string, price: { maximumToPay: "1850" } });
+		expect(google.emails[1].raw).toContain(
+			"Your numbers don't overlap for Rent for the flat at Seestrasse 12 (utilities included). Neither of you learns the other's number.",
+		);
+		await rejects(start({ rule: "OVERLAP_ONLY", roundTo: "50" }), "INVALID_ARGUMENT", "roundTo applies only");
+		// Several answers are allowed, with a note on what each no-overlap tells the other side.
+		const several = await createPriceDecision(env, anna, {
+			price: { ...rent, rule: "OVERLAP_ONLY", maxAnswers: 2 },
+			starterAnswer: { minimumToAccept: "1700" },
+			validateOnly: true,
+		});
+		expect(several).toMatchObject({ caution: expect.stringContaining("so they can narrow it down") });
+		expect(several).not.toMatchObject({ caution: expect.stringContaining("start low") });
+	});
+
 	it("refuses an unknown rule and out-of-range answer counts", async () => {
-		await rejects(start({ rule: "STARTER_PRICE" }), "INVALID_ARGUMENT", 'rule must be one of "MIDPOINT", "LOWEST", "HIGHEST", "MIDPOINT_ROUNDED", "RANDOM"');
+		await rejects(start({ rule: "STARTER_PRICE" }), "INVALID_ARGUMENT", 'rule must be one of "MIDPOINT", "LOWEST", "HIGHEST", "MIDPOINT_ROUNDED", "RANDOM", "OVERLAP_ONLY"');
 		await rejects(start({ maxAnswers: 4 }), "INVALID_ARGUMENT", "maxAnswers must be a whole number from 1 to 3");
 		await rejects(start({ maxAnswers: 0 }), "INVALID_ARGUMENT", "maxAnswers");
 	});

@@ -63,6 +63,7 @@ Two people agree on a price (rent, a sale, a fee) without either seeing the othe
 | `HIGHEST` | the payer's maximum | the receiver learns it; the receiver's number stays private |
 | `MIDPOINT_ROUNDED` | halfway, rounded to `roundTo` (default about 1% of the starter's number), kept inside the overlap | each side's number only roughly |
 | `RANDOM` | a uniform random point in the overlap | only that the other's number is beyond the price |
+| `OVERLAP_ONLY` | none: the result is only "your numbers overlap" or "don't overlap" (salaries, early screening) | nothing: neither number shows |
 
 `decision.price.maxAnswers` (1 to 3, default 1) is how many numbers the other side may send. After a no-deal with answers left the request stays open for them; the starter sees nothing of failed tries. The person answering is told the rule in plain words (`ruleText`) and their number of answers before answering: in the hand-off message, the preview and the web page.
 

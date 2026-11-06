@@ -29,6 +29,8 @@ import {
 	dealPrice,
 	dealText,
 	defaultStep,
+	overlaps,
+	setsPrice,
 	MAX_PRICE_ANSWERS,
 	type Rule,
 	RULES,
@@ -293,7 +295,7 @@ You each tell Neutra one number in private: ${youPay ? "you the most you'd pay" 
 		t,
 		youPay ? "PAYS" : "RECEIVES",
 		who,
-	)} If not, you both hear only "no deal" and neither learns the other's number. ${answersText(
+	)}${setsPrice(t.rule) ? ` If not, you both hear only "no deal" and neither learns the other's number.` : ""} ${answersText(
 		maxAnswersOf(t),
 		youPay ? "PAYS" : "RECEIVES",
 	)} A deal isn't a contract: you two confirm it yourselves.
@@ -538,12 +540,14 @@ export async function createPriceAnswer(
 		throw new ApiError("FAILED_PRECONDITION", "This request can't be answered any more. Ask the person who sent it to start a new one.");
 	}
 	const [minimum, maximum] = side === "PAYS" ? [starterLimit, minor] : [minor, starterLimit];
-	const agreed = dealPrice(terms, { minimum, maximum });
+	// A deal when the numbers overlap; its price, if the rule sets one (OVERLAP_ONLY doesn't).
+	const deal = overlaps({ minimum, maximum });
+	const agreed = deal ? dealPrice(terms, { minimum, maximum }) : null;
 	const attempt = row.attempts + 1;
 	// No deal with tries left: the request stays open for this person, with the starter's sealed limit. The
 	// number just sent is not kept, as always. Only a deal or the last try settles it.
-	const settles = agreed !== null || attempt >= maxAnswers;
-	const state = agreed !== null ? "AGREED" : settles ? "NO_MATCH" : "WAITING";
+	const settles = deal || attempt >= maxAnswers;
+	const state = deal ? "AGREED" : settles ? "NO_MATCH" : "WAITING";
 	const answerId = randomId(26);
 	const claimId = randomId(16);
 	const owned = "EXISTS (SELECT 1 FROM decisions WHERE id = ? AND claim_id = ?)";
@@ -553,7 +557,7 @@ export async function createPriceAnswer(
 	const detail = {
 		kind: "price",
 		attempt,
-		outcome: agreed !== null ? "agreed" : settles ? "no_match" : "retry",
+		outcome: deal ? "agreed" : settles ? "no_match" : "retry",
 		minutesSinceStart: Math.round((now - Date.parse(row.create_time)) / 60_000),
 	};
 
@@ -656,6 +660,32 @@ Neutra`,
 	// One email to both, with both addresses visible: after a deal they settle the details between them.
 	const to = `${d.starter_email}, ${d.responder_email}`;
 	const hi = `Hi ${starter} and ${firstName(responderName)},`;
+	if (d.state === "AGREED" && !setsPrice(terms.rule ?? "MIDPOINT")) {
+		return {
+			to,
+			subject: `Your numbers overlap: ${terms.subject}`,
+			body: `${hi}
+
+Your numbers overlap for ${subjectText(terms)}: worth talking. Neutra set no price; agree on it together. Neither of you learns the other's number.
+
+You can reach each other here:
+${d.starter_name}: ${d.starter_email}
+${responderName}: ${d.responder_email}
+
+Neutra`,
+		};
+	}
+	if (d.state === "NO_MATCH" && !setsPrice(terms.rule ?? "MIDPOINT")) {
+		return {
+			to,
+			subject: `Your numbers don't overlap: ${terms.subject}`,
+			body: `${hi}
+
+Your numbers don't overlap for ${subjectText(terms)}. Neither of you learns the other's number.
+
+Neutra`,
+		};
+	}
 	if (d.state === "AGREED" && d.agreed_minor !== null) {
 		return {
 			to,

@@ -69,7 +69,8 @@ function subject(info: WebRequest): string {
 function introText(info: WebRequest): string {
 	const t = terms(info);
 	const answers = t.maxAnswers === 1 ? "You have one answer." : `You have ${t.maxAnswers} answers.`;
-	return `Give ${pays(info) ? "the most you'd pay" : "the least you'd accept"} for ${esc(t.subject)}. ${esc(t.ruleText)} If not, neither of you learns the other's number. ${answers}`;
+	const noDeal = t.rule === "OVERLAP_ONLY" ? "" : " If not, neither of you learns the other's number.";
+	return `Give ${pays(info) ? "the most you'd pay" : "the least you'd accept"} for ${esc(t.subject)}. ${esc(t.ruleText)}${noDeal} ${answers}`;
 }
 
 const STYLE = `
@@ -150,6 +151,16 @@ export const priceKind: AnswerKind<PriceAnswer, PriceValues> = {
 	// Only the person who answered sees the outcome here; for everyone else the shared page says the request ended.
 	result(info, signedIn) {
 		if (info.viewer !== "responder" || !signedIn) return null;
+		// OVERLAP_ONLY: no price, only whether the numbers overlap.
+		if (info.state === "AGREED" && terms(info).rule === "OVERLAP_ONLY") {
+			return messagePage(
+				"Your numbers overlap",
+				`<p><strong>Your numbers overlap for ${esc(terms(info).subject)}: worth talking.</strong></p><p>Neutra set no price; agree on it together with ${who(info)}. Neither of you learns the other's number. You both got an email.</p>`,
+			);
+		}
+		if (info.state === "NO_MATCH" && terms(info).rule === "OVERLAP_ONLY") {
+			return messagePage("Your numbers don't overlap", `<p>Your numbers don't overlap for ${esc(terms(info).subject)}. Neither of you learns the other's number.</p>`);
+		}
 		if (info.state === "AGREED" && info.agreedPriceText) {
 			return messagePage(
 				"You have a deal",

@@ -10,6 +10,8 @@ describe("deal prices", () => {
 		expect(dealPrice(chf("MIDPOINT"), deal)).toBe(177600);
 		expect(dealPrice(chf("LOWEST"), deal)).toBe(170000);
 		expect(dealPrice(chf("HIGHEST"), deal)).toBe(185100);
+		// OVERLAP_ONLY sets no price, even when the numbers overlap.
+		expect(dealPrice({ rule: "OVERLAP_ONLY", currency: "CHF" }, deal)).toBeNull();
 		for (const rule of ["MIDPOINT", "LOWEST", "HIGHEST", "MIDPOINT_ROUNDED", "RANDOM"] as const) {
 			expect(dealPrice(chf(rule, 5000), { minimum: 185100, maximum: 170000 })).toBeNull();
 		}
@@ -119,5 +121,9 @@ describe("the rules in plain words", () => {
 		expect(starterCaution("LOWEST", 3, "RECEIVES")).toBeUndefined();
 		expect(starterCaution("HIGHEST", 3, "RECEIVES")).toBe("With more than one answer, the other side can start low and raise their number.");
 		expect(starterCaution("LOWEST", 2, "PAYS")).toBe("With more than one answer, the other side can start high and lower their number.");
+		expect(starterCaution("OVERLAP_ONLY", 1, "PAYS")).toBeUndefined();
+		expect(starterCaution("OVERLAP_ONLY", 3, "PAYS")).toBe(
+			'With more than one answer, each "don\'t overlap" tells the other side that your number is beyond the one they sent, so they can narrow it down.',
+		);
 	});
 });

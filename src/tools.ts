@@ -67,10 +67,10 @@ export const CREATE_DECISION_WITH_PRICE = {
 						unit: z.string().optional().describe('Up to 30 characters, e.g. "per month"'),
 						answerBy: z.string().optional().describe('Last day to answer, "YYYY-MM-DD", 1 to 14 days ahead. Leave out for 14 days.'),
 						rule: z
-							.enum(["MIDPOINT", "LOWEST", "HIGHEST", "MIDPOINT_ROUNDED", "RANDOM"])
+							.enum(["MIDPOINT", "LOWEST", "HIGHEST", "MIDPOINT_ROUNDED", "RANDOM", "OVERLAP_ONLY"])
 							.optional()
 							.describe(
-								"Where in the overlap a deal lands. MIDPOINT (default): halfway, so each side can then work out the other's number. LOWEST: at the receiver's minimum (favors the payer, whose number stays private). HIGHEST: at the payer's maximum (favors the receiver, whose number stays private). MIDPOINT_ROUNDED: halfway, rounded to roundTo, so each side learns the other's number only roughly. RANDOM: a random point in the overlap, so each side learns only that the other's number is beyond the price.",
+								"Where in the overlap a deal lands. MIDPOINT (default): halfway, so each side can then work out the other's number. LOWEST: at the receiver's minimum (favors the payer, whose number stays private). HIGHEST: at the payer's maximum (favors the receiver, whose number stays private). MIDPOINT_ROUNDED: halfway, rounded to roundTo, so each side learns the other's number only roughly. RANDOM: a random point in the overlap, so each side learns only that the other's number is beyond the price. OVERLAP_ONLY: no price, only whether the numbers overlap (e.g. salaries, early screening); neither number shows.",
 							),
 						roundTo: z
 							.string()

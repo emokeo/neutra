@@ -245,6 +245,22 @@ describe("web answer page for a price", () => {
 		expect(result).toContain("That's the lowest price you both accept.");
 	});
 
+	it("OVERLAP_ONLY: says only that the numbers overlap", async () => {
+		const d = await createPriceDecision(env, anna, {
+			price: { subject: "Salary for the role", currencyCode: "CHF", unit: "per year", rule: "OVERLAP_ONLY" },
+			starterAnswer: { maximumToPay: "120000" },
+		});
+		if (d.validateOnly) throw new Error("expected a decision");
+		const token = (d.decision.code as string).replace(/^neutra:/, "");
+		const cookie = await as(ben);
+		const form = await (await get(`/a/${token}`, cookie)).text();
+		expect(form).toContain("Neutra only tells you both whether your numbers overlap.");
+		await post(`/a/${token}`, cookie, [["amount", "110000"], ["step", "send"]]);
+		const result = await (await get(`/a/${token}`, cookie)).text();
+		expect(result).toContain("Your numbers overlap for Salary for the role: worth talking.");
+		expect(result).not.toMatch(/120,000|110,000|120000|110000/);
+	});
+
 	it("tells the starter it's their own request", async () => {
 		const token = await start();
 		expect(await (await get(`/a/${token}`, await as(anna))).text()).toContain("Send the link to the other person: they answer it, not you.");

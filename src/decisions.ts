@@ -5,19 +5,29 @@ import { checkCreateAnswer, checkCreateDecision } from "./limits";
 import { formatDay, formatRange, isValidTimeZone, parseTimestamp } from "./time";
 import { CLAUDE_DIRECTORY_URL } from "./links";
 import { durationText } from "./web-form";
+import { notAMeeting, pricePreview, priceView, termsOf } from "./price";
+import { dealText, type Rule } from "./price-rules";
 
 export type Caller = { email: string; name: string; client?: string };
 export type Interval = { startTime: string; endTime: string };
 
-export type State = "WAITING" | "NO_MATCH" | "INVITE_SENT" | "ACCEPTED" | "DECLINED" | "EXPIRED";
-// Internal only: an answer is being processed. Shown to callers as WAITING.
+// AGREED is for price decisions only; meetings use the others.
+export type State = "WAITING" | "NO_MATCH" | "INVITE_SENT" | "ACCEPTED" | "DECLINED" | "EXPIRED" | "AGREED";
+// Internal only: an answer is being processed. Shown to callers as WAITING. Price decisions never use it.
 type StoredState = State | "MATCHING";
 
 /** An error with a google.rpc canonical code, as in the API's error table. */
 export type ErrorCode = "NOT_FOUND" | "PERMISSION_DENIED" | "FAILED_PRECONDITION" | "INVALID_ARGUMENT" | "RESOURCE_EXHAUSTED";
 
 /** Why an answer was refused, for callers that word the error themselves (the web page). */
-export type ErrorReason = "TOO_NARROW" | "OUT_OF_RANGE" | "UNCONFIRMED" | "ANSWER_LIMIT" | "SAME_STARTER_LIMIT";
+export type ErrorReason =
+	| "TOO_NARROW"
+	| "OUT_OF_RANGE"
+	| "UNCONFIRMED"
+	| "ANSWER_LIMIT"
+	| "SAME_STARTER_LIMIT"
+	| "PRICE_ANSWER_LIMIT"
+	| "PRICE_OFF";
 
 export class ApiError extends Error {
 	readonly code: ErrorCode;
@@ -29,8 +39,13 @@ export class ApiError extends Error {
 	}
 }
 
-type DecisionRow = {
+export type DecisionRow = {
 	id: string;
+	kind: "meeting" | "price";
+	// Price decisions only: the terms (JSON), the starter's sealed limit until it settles, and the agreed price.
+	terms_json: string | null;
+	limit_sealed: string | null;
+	agreed_minor: number | null;
 	starter_email: string;
 	starter_name: string;
 	duration_seconds: number;
@@ -52,7 +67,7 @@ type DecisionRow = {
 	update_time: string;
 };
 
-type AnswerRow = {
+export type AnswerRow = {
 	id: string;
 	decision_id: string;
 	author_email: string;
@@ -74,23 +89,23 @@ const MIN_BREADTH = 2; // every answer must cover at least twice the meeting dur
 
 const ALPHABET = "abcdefghijklmnopqrstuvwxyz234567";
 
-function randomId(length: number): string {
+export function randomId(length: number): string {
 	const bytes = crypto.getRandomValues(new Uint8Array(length));
 	// First character is a letter, as AIP-122 asks for resource IDs.
 	return Array.from(bytes, (b, i) => (i === 0 ? ALPHABET[b % 26] : ALPHABET[b % 32])).join("");
 }
 
-async function sha256(text: string): Promise<string> {
+export async function sha256(text: string): Promise<string> {
 	const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
 	return Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, "0")).join("");
 }
 
 /** "Anna" from "Anna Muster": invites and pages use first names. */
-function firstName(name: string): string {
+export function firstName(name: string): string {
 	return name.trim().split(/\s+/)[0] || name;
 }
 
-function same(a: string, b: string): boolean {
+export function same(a: string, b: string): boolean {
 	return a.trim().toLowerCase() === b.trim().toLowerCase();
 }
 
@@ -221,7 +236,7 @@ export function findMatch(
 	return best;
 }
 
-function iso(ms: number): string {
+export function iso(ms: number): string {
 	return new Date(ms).toISOString();
 }
 
@@ -237,7 +252,7 @@ function idFromName(name: string): string {
 	return match[1];
 }
 
-async function answersOf(env: Env, id: string): Promise<AnswerRow[]> {
+export async function answersOf(env: Env, id: string): Promise<AnswerRow[]> {
 	const { results } = await env.DB.prepare("SELECT * FROM answers WHERE decision_id = ? ORDER BY create_time")
 		.bind(id)
 		.all<AnswerRow>();
@@ -253,7 +268,7 @@ async function setState(env: Env, id: string, from: StoredState, state: StoredSt
 }
 
 /** Brings a decision up to date: expiry, and the invite replies from the calendar. */
-async function refresh(
+export async function refresh(
 	env: Env,
 	row: DecisionRow,
 	now: number,
@@ -262,6 +277,8 @@ async function refresh(
 	if (row.state === "WAITING" && now > Date.parse(row.expire_time)) {
 		if (await setState(env, row.id, "WAITING", "EXPIRED", now)) {
 			await env.DB.prepare("UPDATE answers SET windows_json = '[]' WHERE decision_id = ?").bind(row.id).run();
+			// A price request that ends unanswered loses the starter's limit too.
+			await env.DB.prepare("UPDATE decisions SET limit_sealed = NULL WHERE id = ?").bind(row.id).run();
 			await recordEvent(env, { type: "decision_expired", decisionRef: row.stats_ref, detail: { answered: !!row.responder_email } });
 		}
 		row = { ...row, state: "EXPIRED", update_time: iso(now) };
@@ -353,6 +370,10 @@ export async function createDecision(
 	const code = randomId(12);
 	const row: DecisionRow = {
 		id,
+		kind: "meeting",
+		terms_json: null,
+		limit_sealed: null,
+		agreed_minor: null,
 		starter_email: caller.email,
 		starter_name: caller.name,
 		duration_seconds: durationSeconds,
@@ -438,7 +459,39 @@ export async function getDecision(env: Env, caller: Caller, name: string) {
 		throw new ApiError("PERMISSION_DENIED", "Only the decision's participants can read it.");
 	}
 	const { row, replies } = await refresh(env, loaded, Date.now());
+	if (row.kind === "price") return priceView(row, answers, caller);
 	return view(row, answers, replies, caller);
+}
+
+/**
+ * What a request asks for, for anyone holding its code (get_decision by code, neutra.v1.DecisionPreview): the
+ * terms the hand-off message already shows, and whether it can still be answered. Read-only: the code stays
+ * unbound and nothing is counted. The outcome stays private to the two people, so this says only open or not.
+ */
+export async function requestPreview(env: Env, caller: Caller, codeText: string) {
+	const combined = splitCombinedCode(codeText);
+	if (!combined) {
+		throw new ApiError("INVALID_ARGUMENT", 'Send the whole code from the message: "neutra:" followed by 26 characters, a dot and 12 more.');
+	}
+	const loaded = await load(env, combined.id);
+	if ((await sha256(combined.code)) !== loaded.code_hash) {
+		throw new ApiError("PERMISSION_DENIED", "The code is wrong.");
+	}
+	const now = Date.now();
+	const { row } = await refresh(env, loaded, now);
+	// For the starter, open means only "not settled": whether someone has tried must not show (see priceView).
+	const isStarter = same(caller.email, row.starter_email);
+	const open =
+		(row.state === "WAITING" || row.state === "MATCHING") &&
+		!(row.offered_until && Date.parse(row.offered_until) < now) &&
+		(isStarter || !row.responder_email || same(row.responder_email, caller.email));
+	const preview = {
+		from: firstName(row.starter_name) || "Someone",
+		answerBy: row.expire_time.slice(0, 10),
+		open,
+		...(row.kind === "price" ? { price: pricePreview(row, caller) } : { meeting: { duration: `${row.duration_seconds}s` } }),
+	};
+	return { preview, isStarter };
 }
 
 export async function deleteDecision(env: Env, caller: Caller, name: string): Promise<void> {
@@ -472,27 +525,41 @@ export async function deleteDecision(env: Env, caller: Caller, name: string): Pr
 	});
 }
 
+/** The request an answer is for, once the caller and the code are checked. Used by every kind of answer. */
+export async function requestForCode(
+	env: Env,
+	caller: Caller,
+	parent: string | undefined,
+	codeText: string,
+): Promise<{ row: DecisionRow; code: string }> {
+	// Either the combined code alone, or the decision name plus the code.
+	const combined = splitCombinedCode(codeText);
+	const id = combined ? combined.id : idFromName(parent ?? "");
+	if (combined && parent && idFromName(parent) !== combined.id) {
+		throw new ApiError("INVALID_ARGUMENT", "The decision name and the combined code don't match.");
+	}
+	const code = (combined ? combined.code : codeText).trim().toLowerCase();
+	const row = await load(env, id);
+	// Check who is calling before doing anything else with the decision.
+	if (same(row.starter_email, caller.email)) {
+		throw new ApiError("PERMISSION_DENIED", "The starter already answered when creating the decision.");
+	}
+	if ((await sha256(code)) !== row.code_hash) {
+		throw new ApiError("PERMISSION_DENIED", "The code is wrong.");
+	}
+	return { row, code };
+}
+
 export async function createAnswer(
 	env: Env,
 	caller: Caller,
 	request: { parent?: string; code: string; windows: Interval[]; timeZone?: string },
 ) {
 	const now = Date.now();
-	// Either the combined code alone, or the decision name plus the code.
-	const combined = splitCombinedCode(request.code);
-	const id = combined ? combined.id : idFromName(request.parent ?? "");
-	if (combined && request.parent && idFromName(request.parent) !== combined.id) {
-		throw new ApiError("INVALID_ARGUMENT", "The decision name and the combined code don't match.");
-	}
-	const code = combined ? combined.code : request.code;
-	const loaded = await load(env, id);
-	// Check who is calling before doing anything else with the decision.
-	if (same(loaded.starter_email, caller.email)) {
-		throw new ApiError("PERMISSION_DENIED", "The starter already answered when creating the decision.");
-	}
-	if ((await sha256(code.trim().toLowerCase())) !== loaded.code_hash) {
-		throw new ApiError("PERMISSION_DENIED", "The code is wrong.");
-	}
+	const { row: loaded } = await requestForCode(env, caller, request.parent, request.code);
+	// Before anything is bound or counted: price requests take a price, not times.
+	if (loaded.kind === "price") throw new ApiError("INVALID_ARGUMENT", notAMeeting(loaded));
+	const id = loaded.id;
 	// The code binds to the first person who answers with it.
 	if (loaded.responder_email && !same(loaded.responder_email, caller.email)) {
 		throw new ApiError("PERMISSION_DENIED", "This code is already used by someone else.");
@@ -658,6 +725,9 @@ export async function getAnswer(env: Env, caller: Caller, name: string) {
 	if (!same(row.author_email, caller.email)) {
 		throw new ApiError("PERMISSION_DENIED", "Only the author can read an answer.");
 	}
+	const decision = await env.DB.prepare("SELECT kind FROM decisions WHERE id = ?").bind(row.decision_id).first<{ kind: string }>();
+	// A price answer keeps no number (neutra.v1.PriceAnswer is input only), so there is nothing to show but that it exists.
+	if (decision?.kind === "price") return { name, price: {}, createTime: row.create_time };
 	const windows: { start: number; end: number }[] = JSON.parse(row.windows_json);
 	return {
 		name,
@@ -669,6 +739,7 @@ export async function getAnswer(env: Env, caller: Caller, name: string) {
 
 /** What the web answer page may show about a request: only what the hand-off message already says, plus the outcome for the person who answered. */
 export type WebRequest = {
+	kind: "meeting" | "price";
 	starterFirstName: string;
 	durationSeconds: number;
 	answerBy: number;
@@ -682,6 +753,21 @@ export type WebRequest = {
 	pending: boolean;
 	// The invited time, in the responder's time zone. Only for the responder.
 	scheduledTimeLocal?: string;
+	// Price requests: the terms from the hand-off message, with the side of the person answering.
+	price?: {
+		subject: string;
+		details?: string;
+		currency: string;
+		unit?: string;
+		yourSide: "PAYS" | "RECEIVES";
+		rule: Rule;
+		ruleText: string;
+		// How a deal's price came about, for the result page: "halfway between your numbers".
+		dealText: string;
+		maxAnswers: number;
+	};
+	// The agreed price, ready to show. Only for the responder.
+	agreedPriceText?: string;
 };
 
 /** Looks up a request for the web answer page. Null when the request doesn't exist or the code is wrong. */
@@ -709,15 +795,35 @@ export async function webRequest(env: Env, id: string, code: string, viewerEmail
 			responder?.time_zone ?? "UTC",
 		);
 	}
+	const price = row.kind === "price" ? priceView(row, [], { email: "", name: "" }).price : null;
+	const preview = row.kind === "price" ? pricePreview(row, { email: "", name: "" }) : null;
 	return {
+		kind: row.kind === "price" ? "price" : "meeting",
 		starterFirstName: firstName(row.starter_name) || "Someone",
 		durationSeconds: row.duration_seconds,
 		answerBy: Date.parse(row.expire_time),
 		state: (row.state === "MATCHING" ? "WAITING" : row.state) as State,
 		viewer,
-		remainingAttempts: Math.max(0, MAX_ANSWERS - row.attempts),
+		remainingAttempts: Math.max(0, (price ? price.maxAnswers : MAX_ANSWERS) - row.attempts),
 		timesPassed: !!row.offered_until && Date.parse(row.offered_until) < now,
 		pending: row.state === "MATCHING",
 		...(scheduledTimeLocal ? { scheduledTimeLocal } : {}),
+		...(price
+			? {
+					// Seen from the side of whoever isn't the starter: the page is for the person answering.
+					price: {
+						subject: price.subject,
+						...(price.details ? { details: price.details } : {}),
+						currency: price.currencyCode,
+						...(price.unit ? { unit: price.unit } : {}),
+						yourSide: termsOf(row).starterSide === "PAYS" ? ("RECEIVES" as const) : ("PAYS" as const),
+						rule: price.rule,
+						ruleText: preview?.ruleText ?? "",
+						dealText: dealText(termsOf(row)),
+						maxAnswers: price.maxAnswers,
+					},
+					...(viewer === "responder" && price.agreedPriceText ? { agreedPriceText: price.agreedPriceText } : {}),
+				}
+			: {}),
 	};
 }

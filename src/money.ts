@@ -1,0 +1,199 @@
+// Amounts for price decisions: reading, showing and splitting them. Pure, so it is easy to test.
+// Amounts are kept as whole numbers of the currency's smallest unit (cents, rappen, yen), never as
+// floating-point money: 0.1 + 0.2 must not decide a price.
+import { ApiError } from "./decisions";
+
+// Intl.supportedValuesOf exists in Workers and Node but not in this project's TypeScript lib, so type it here.
+const intl = Intl as typeof Intl & { supportedValuesOf?: (key: "currency") => string[] };
+
+/** The largest amount Neutra takes: 10^13 smallest units (e.g. 100 billion francs), well inside exact integers. */
+export const MAX_MINOR = 10 ** 13;
+
+/** Upper-case ISO 4217 code, or the error that says what to send instead. */
+export function currencyCode(value: string): string {
+	const code = value.trim().toUpperCase();
+	// Intl accepts any three letters as a currency, so check against the list it knows when it can.
+	const known = typeof intl.supportedValuesOf === "function" ? intl.supportedValuesOf("currency") : null;
+	if (!/^[A-Z]{3}$/.test(code) || (known && !known.includes(code))) {
+		throw new ApiError("INVALID_ARGUMENT", `"${value}" isn't an ISO 4217 currency code. Use e.g. "CHF", "EUR", "USD".`);
+	}
+	return code;
+}
+
+/** How many decimals the currency has: 2 for CHF, 0 for JPY, 3 for KWD. */
+export function minorDigits(currency: string): number {
+	const code = currencyCode(currency);
+	return new Intl.NumberFormat("en", { style: "currency", currency: code }).resolvedOptions().maximumFractionDigits ?? 2;
+}
+
+/** Why a typed amount can't be used, so the API and the web page can each say it in their own words. */
+export type AmountProblem = "FORMAT" | "DECIMALS" | "ZERO" | "TOO_LARGE";
+
+/**
+ * Reads a plain amount ("1850" or "1850.50") into smallest units. Integer and decimal parts are read
+ * separately as whole numbers, so nothing is ever rounded on the way in.
+ */
+export function readPlainAmount(text: string, digits: number): { minor: number } | { problem: AmountProblem } {
+	const m = /^(\d+)(?:\.(\d+))?$/.exec(text);
+	if (!m) return { problem: "FORMAT" };
+	const fraction = m[2] ?? "";
+	// No more decimals than the currency has, not even zeros: "1.700" in francs is far likelier to mean
+	// one thousand seven hundred than 1.70, so it must not quietly become 1.70.
+	if (fraction.length > digits) return { problem: "DECIMALS" };
+	const whole = m[1].replace(/^0+(?=\d)/, "");
+	// More than 14 integer digits can't be under the limit; checking first keeps the numbers exact.
+	if (whole.length > 14) return { problem: "TOO_LARGE" };
+	const minor = Number(whole) * 10 ** digits + Number((fraction + "0".repeat(digits)).slice(0, digits) || "0");
+	if (minor <= 0) return { problem: "ZERO" };
+	if (minor > MAX_MINOR) return { problem: "TOO_LARGE" };
+	return { minor };
+}
+
+/** An amount an assistant sent, as a string or a number, in smallest units. */
+export function parseAmount(value: string | number, currency: string): number {
+	const code = currencyCode(currency);
+	const digits = minorDigits(code);
+	let text: string;
+	if (typeof value === "number") {
+		// Numbers go through their shortest written form; 1e21 or NaN are refused like any other odd text.
+		text = Number.isFinite(value) ? String(value) : "";
+	} else {
+		text = value.trim();
+	}
+	const result = readPlainAmount(text, digits);
+	if ("minor" in result) return result.minor;
+	const shown = typeof value === "number" ? String(value) : value;
+	switch (result.problem) {
+		case "DECIMALS": {
+			// A dot between groups of three is how many people write thousands.
+			const thousands = /^\d{1,3}(\.\d{3})+$/.test(text) ? text.replace(/\./g, "") : null;
+			const said = digits === 0 ? `${code} takes no decimals; got "${shown}".` : `${code} takes at most ${digits} decimals; got "${shown}".`;
+			throw new ApiError(
+				"INVALID_ARGUMENT",
+				thousands
+					? `${said} If you meant ${thousands}, send "${thousands}".`
+					: digits === 0
+						? `${said} Send a whole amount, e.g. "1500".`
+						: said,
+			);
+		}
+		case "ZERO":
+			throw new ApiError("INVALID_ARGUMENT", `The amount must be more than 0; got "${shown}".`);
+		case "TOO_LARGE":
+			throw new ApiError("INVALID_ARGUMENT", `"${shown}" is more than Neutra can handle. Check the amount with your person.`);
+		default:
+			throw new ApiError(
+				"INVALID_ARGUMENT",
+				`"${shown}" isn't a plain amount. Send digits with an optional dot, e.g. "1850" or "1850.50".`,
+			);
+	}
+}
+
+/** "1850.50": the amount as plain digits with all of the currency's decimals, for the API. */
+export function plainAmount(minor: number, currency: string): string {
+	const digits = minorDigits(currency);
+	const factor = 10 ** digits;
+	const whole = Math.floor(minor / factor);
+	return digits ? `${whole}.${String(minor % factor).padStart(digits, "0")}` : String(whole);
+}
+
+/**
+ * "CHF 1,775 per month": for people. With wholeOnly (the default), whole amounts drop the ".00";
+ * an amount with cents always shows them.
+ */
+export function formatAmount(minor: number, currency: string, unit?: string, wholeOnly = true): string {
+	const code = currencyCode(currency);
+	const digits = minorDigits(code);
+	const factor = 10 ** digits;
+	const whole = new Intl.NumberFormat("en").format(Math.floor(minor / factor));
+	const cents = minor % factor;
+	const decimals = digits && (cents !== 0 || !wholeOnly) ? `.${String(cents).padStart(digits, "0")}` : "";
+	return `${code} ${whole}${decimals}${unit ? ` ${unit}` : ""}`;
+}
+
+/**
+ * The MIDPOINT rule: a deal when the most the payer would pay is at least the least the receiver
+ * would accept, at the price halfway between. A half smallest unit rounds up. When both people gave
+ * whole amounts (e.g. 1700 and 1851 francs), the price is whole too, rounded up (1776, not 1775.50):
+ * people who think in whole francs shouldn't get cents back.
+ */
+export function midpoint(minimum: number, maximum: number, currency: string): { deal: true; price: number } | { deal: false } {
+	if (maximum < minimum) return { deal: false };
+	let price = Math.floor((minimum + maximum + 1) / 2);
+	const factor = 10 ** minorDigits(currency);
+	if (minimum % factor === 0 && maximum % factor === 0 && price % factor !== 0) {
+		price = Math.ceil(price / factor) * factor;
+	}
+	return { deal: true, price };
+}
+
+/** The currency's short sign, e.g. "€" for EUR, "$" for USD, "CHF" for CHF. */
+function narrowSymbol(currency: string): string {
+	const parts = new Intl.NumberFormat("en", { style: "currency", currency, currencyDisplay: "narrowSymbol" }).formatToParts(1);
+	return parts.find((p) => p.type === "currency")?.value ?? currency;
+}
+
+/**
+ * A currency written into an amount that isn't the request's own ("EUR 1700" or "€1700" in a CHF request),
+ * or null. Answers are always in the request's currency, so this is worth saying plainly.
+ */
+export function otherCurrencyIn(text: string, currency: string): string | null {
+	const code = currency.toUpperCase();
+	const known = typeof intl.supportedValuesOf === "function" ? intl.supportedValuesOf("currency") : [];
+	for (const word of text.toUpperCase().match(/[A-Z]{3}/g) ?? []) {
+		if (word !== code && known.includes(word)) return word;
+	}
+	const sign = text.match(/[$€£¥₹₩₽₪₺₴₦₱฿]/)?.[0];
+	return sign && sign !== narrowSymbol(code) ? sign : null;
+}
+
+/**
+ * Splits "10000-20000" (also "10000 - 20000", "10000 to 20000", an en or em dash) into its two ends, or null for
+ * a single amount. The second end must start with a digit (or a currency code), so "1700.-" stays one amount.
+ */
+export function splitRange(text: string): [string, string] | null {
+	const m = /^(.*\d.*?)\s*(?:–|—|\bto\b|-)\s*([A-Za-z]{0,3}\s*\d.*)$/i.exec(text.trim());
+	return m ? [m[1].trim(), m[2].trim()] : null;
+}
+
+/** "10,000": an amount without its currency, for ranges. */
+export function formatNumber(minor: number, currency: string): string {
+	return formatAmount(minor, currency).replace(/^[A-Z]{3} /, "");
+}
+
+/** What one side will accept, in smallest units. high is Infinity when there is no upper end. */
+export type PriceRange = { low: number; high: number };
+
+/**
+ * A side's number as a range. A single number is open on the far side: the most someone would pay is
+ * [0, max], the least someone would accept is [min, no limit]. A range "from-to" closes both ends; the field it
+ * comes in still says which side it is. Reversed or equal-ended ranges are refused (one number says the same).
+ */
+export function parseLimit(value: string | number, currency: string, side: "PAYS" | "RECEIVES"): PriceRange & { isRange: boolean } {
+	const ends = typeof value === "string" ? splitRange(value) : null;
+	if (!ends) {
+		const n = parseAmount(value, currency);
+		return side === "PAYS" ? { low: 0, high: n, isRange: false } : { low: n, high: Infinity, isRange: false };
+	}
+	const [low, high] = ends.map((end) => parseAmount(end, currency));
+	if (low >= high) {
+		throw new ApiError(
+			"INVALID_ARGUMENT",
+			`The range "${value}" ${low === high ? "has the same number at both ends" : "goes from high to low"}. Send the lower number first, e.g. "10000-20000", or one number.`,
+		);
+	}
+	return { low, high, isRange: true };
+}
+
+/**
+ * Where two sides' ranges meet, or null when they don't: a deal is possible exactly there.
+ * Why both ends of a range are safe to use: an inner end (the payer's low end, the receiver's high end) can only
+ * shrink the overlap against its own side. A payer's floor can only raise the price they pay, a receiver's ceiling
+ * can only lower what they get, so nobody gains by exaggerating one. It lets people say real constraints, like the
+ * floor of an employer's pay band.
+ */
+export function overlapOf(payer: PriceRange, receiver: PriceRange): { minimum: number; maximum: number } | null {
+	const minimum = Math.max(receiver.low, payer.low);
+	const maximum = Math.min(receiver.high, payer.high);
+	return minimum <= maximum ? { minimum, maximum } : null;
+}

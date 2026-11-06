@@ -5,6 +5,8 @@ declare namespace Cloudflare {
 	interface Env {
 		MCP_RESOURCE: string;
 		ACCESS_MODE?: "allowlist" | "open";
+		// Price decisions: "off" (the default), "testers" (only ALLOWED_EMAILS can start one) or "open".
+		PRICE_DECISIONS?: "off" | "testers" | "open";
 		OAUTH_KV: KVNamespace;
 		DB: D1Database;
 		GOOGLE_CLIENT_ID: string;

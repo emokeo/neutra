@@ -50,6 +50,31 @@ A remote MCP server with Google sign-in. Resources follow [Google's AIPs](https:
 | `create_feature_request` | Tell Neutra's makers about something your person wanted that Neutra can't do yet. |
 | `get_feature_request` | Read a feature request you sent. |
 
+### Price decisions (off by default)
+
+Two people agree on a price (rent, a sale, a fee) without either seeing the other's limit. A price decision is a kind of decision: the starter's assistant calls `create_decision` with `decision.price` (subject, details, `currencyCode`, unit, `answerBy`) and `starterAnswer.price` with one number: `minimumToAccept` if they receive the money, or `maximumToPay` if they pay. The other side answers with `create_answer` and `answer.price`, always in the decision's currency. If the payer's maximum reaches the receiver's minimum, there is a deal; otherwise both hear only "no deal". Both get the result by email.
+
+`decision.price.rule` says where in the overlap a deal lands, and so what it reveals:
+
+| Rule | Price | What a deal reveals |
+| --- | --- | --- |
+| `MIDPOINT` (default) | the middle of where the numbers meet | each side can work out the other's number |
+| `LOWEST` | the receiver's minimum | the payer learns it; the payer's number stays private |
+| `HIGHEST` | the payer's maximum | the receiver learns it; the receiver's number stays private |
+| `MIDPOINT_ROUNDED` | the middle, rounded to `roundTo` (default about 1% of the starter's number), kept inside the overlap | each side's number only roughly |
+| `RANDOM` | a uniform random point in the overlap | only that the other's number is beyond the price |
+| `OVERLAP_ONLY` | none: the result is only "your numbers overlap" or "don't overlap" (salaries, early screening) | nothing: neither number shows |
+
+`decision.price.maxAnswers` (1 to 3, default 1) is how many numbers the other side may send. After a no-deal with answers left the request stays open for them; the starter sees nothing of failed tries. The person answering is told the rule in plain words (`ruleText`) and their number of answers before answering: in the hand-off message, the preview and the web page.
+
+- The answering person's number is never stored, not even between tries. The starter's is encrypted with a key made from the request code (stored only as a hash) and cleared as soon as the request settles or ends.
+- `get_decision` with a `code` returns a `preview` of what a request asks for before answering (`yourSide` `PAYS`: send `maximumToPay`; `RECEIVES`: send `minimumToAccept`), without using it up.
+- Inputs and outputs follow the `neutra.v1` messages (proto3 JSON): every price field sits inside `price`, e.g. `decision.price.agreedPriceText`.
+- A limit may also be a range, e.g. `"10000-20000"` (a pay band with a floor, a price with a ceiling). Both ends count: a deal needs the two sides' ranges to meet, and the rule picks the price inside where they meet. A single number leaves the far end open. An inner end can only work against its own side, so there is nothing to gain by exaggerating it. Both ends of the starter's range are sealed; the answering person's are never stored.
+- `validateOnly` on either call reads the number back for the person to confirm, without sending anything.
+- At most 3 price requests answered per person per day (all tries of one request count once).
+- Switched by `PRICE_DECISIONS` in `wrangler.jsonc`: `off` (nothing changes for anyone), `testers` (only `ALLOWED_EMAILS` get `decision.price` in `create_decision`; anyone with a code can answer) or `open`. See `docs/RUNBOOK.md`.
+
 Errors use `google.rpc` codes: `NOT_FOUND`, `PERMISSION_DENIED`, `FAILED_PRECONDITION`, `INVALID_ARGUMENT`, `RESOURCE_EXHAUSTED` (a daily or hourly limit was reached).
 
 ## Running Neutra

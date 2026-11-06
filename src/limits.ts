@@ -9,6 +9,9 @@ export const LIMITS = {
 	answersPerHour: 100,
 	/** Decisions from the same starter one person may answer per 24 hours, so a starter can't probe someone with many decisions. */
 	answeredFromSameStarterPerDay: 3,
+	/** Price requests one person may answer per 24 hours, from anyone (each with all its tries). Each answer tells its starter something
+	 * (deal or no deal), so many requests to the same person could otherwise narrow down their number. */
+	priceAnswersPerDay: 3,
 };
 
 const HOUR = 60 * 60 * 1000;
@@ -42,4 +45,24 @@ export async function checkCreateAnswer(env: Env, email: string, starterEmail: s
 	if ((sameStarter?.n ?? 0) >= LIMITS.answeredFromSameStarterPerDay) {
 		tooMany(`${LIMITS.answeredFromSameStarterPerDay} decisions from the same person per day`, "SAME_STARTER_LIMIT");
 	}
+}
+
+/**
+ * Price requests answered count from the anonymous events, like the hourly limit: answer rows go when a decision
+ * is deleted, and deleting a settled request must not give the answer back. Requests, not tries, count, so a
+ * request with several answers doesn't use up the day; the request being answered is left out, so its own
+ * later tries are never refused by this limit. Parameters: person, since, the request's stats_ref.
+ */
+export const PRICE_REQUESTS_TODAY =
+	"SELECT COUNT(DISTINCT decision_ref) FROM events WHERE person = ? AND type = 'answer_submitted' AND json_extract(detail_json, '$.kind') = 'price' AND create_time > ? AND decision_ref IS NOT ?";
+
+export async function checkPriceAnswer(env: Env, email: string, decisionRef: string | null, now = Date.now()): Promise<void> {
+	const row = await env.DB.prepare(PRICE_REQUESTS_TODAY.replace("COUNT(DISTINCT decision_ref)", "COUNT(DISTINCT decision_ref) AS n"))
+		.bind(await personId(env, email), new Date(now - 24 * HOUR).toISOString(), decisionRef)
+		.first<{ n: number }>();
+	if ((row?.n ?? 0) >= LIMITS.priceAnswersPerDay) priceAnswerLimit();
+}
+
+export function priceAnswerLimit(): never {
+	tooMany(`${LIMITS.priceAnswersPerDay} price requests answered per day, so nobody can work out a person's number with many requests`, "PRICE_ANSWER_LIMIT");
 }

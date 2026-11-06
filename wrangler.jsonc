@@ -15,6 +15,9 @@
     "MCP_RESOURCE": "https://neutra.day/mcp",
     // "allowlist": only the emails in ALLOWED_EMAILS can sign in. "open": any verified Google account.
     "ACCESS_MODE": "open",
+    // Price decisions. "off": the tool isn't offered and price answers are refused. "testers": only
+    // ALLOWED_EMAILS can start one (anyone with the code can answer). "open": everyone. See docs/RUNBOOK.md.
+    "PRICE_DECISIONS": "off",
   },
   "kv_namespaces": [
     {

@@ -2,6 +2,7 @@
 import { eventExists, sendEmail } from "./calendar";
 import { ANSWER_DAYS, MAX_ANSWERS } from "./decisions";
 import { recordEvent } from "./events";
+import { priceNotice } from "./price";
 import { formatDay } from "./time";
 
 export const RETENTION_DAYS = 7;
@@ -13,6 +14,15 @@ type Row = {
 	starter_name: string;
 	responder_email: string | null;
 	offered_until: string | null;
+};
+
+// For the result emails of price decisions, which need the terms and the outcome.
+type NoticeRow = Row & {
+	kind: "meeting" | "price";
+	state: "NO_MATCH" | "EXPIRED" | "AGREED";
+	terms_json: string | null;
+	agreed_minor: number | null;
+	expire_time: string;
 };
 
 function firstName(name: string): string {
@@ -121,7 +131,11 @@ export async function runMaintenance(env: Env, now = Date.now()) {
 		.all<{ id: string; stats_ref: string | null; responder_email: string | null }>();
 	for (const d of overdue) {
 		await env.DB.batch([
-			env.DB.prepare("UPDATE decisions SET state = 'EXPIRED', update_time = ? WHERE id = ? AND state = 'WAITING'").bind(nowIso, d.id),
+			// A price request's sealed limit goes with it.
+			env.DB.prepare("UPDATE decisions SET state = 'EXPIRED', limit_sealed = NULL, update_time = ? WHERE id = ? AND state = 'WAITING'").bind(
+				nowIso,
+				d.id,
+			),
 			env.DB.prepare("UPDATE answers SET windows_json = '[]' WHERE decision_id = ?").bind(d.id),
 		]);
 		await recordEvent(env, { type: "decision_expired", decisionRef: d.stats_ref, detail: { answered: !!d.responder_email } });
@@ -132,7 +146,7 @@ export async function runMaintenance(env: Env, now = Date.now()) {
 	// (ending it now would tell the other person when the starter's times end), but the starter hears now,
 	// and their times are deleted.
 	const { results: passed } = await env.DB.prepare(
-		"SELECT id, stats_ref, starter_email, starter_name, responder_email, offered_until FROM decisions WHERE state = 'WAITING' AND notified = 0 AND offered_until < ?",
+		"SELECT id, stats_ref, starter_email, starter_name, responder_email, offered_until FROM decisions WHERE kind = 'meeting' AND state = 'WAITING' AND notified = 0 AND offered_until < ?",
 	)
 		.bind(nowIso)
 		.all<Row>();
@@ -149,13 +163,13 @@ export async function runMaintenance(env: Env, now = Date.now()) {
 		}
 	}
 
-	// 2. Delete everything about decisions that ended more than RETENTION_DAYS ago.
+	// 2. Delete everything about decisions that ended more than RETENTION_DAYS ago, including price deals.
 	// The calendar event stays: deleting it would also remove it from both people's calendars.
 	const cutoff = new Date(now - RETENTION_DAYS * 24 * 60 * 60 * 1000).toISOString();
 	const { results: old } = await env.DB.prepare(
 		`SELECT id FROM decisions
 		 WHERE (state IN ('INVITE_SENT', 'ACCEPTED', 'DECLINED') AND scheduled_end < ?)
-		    OR (state IN ('NO_MATCH', 'EXPIRED') AND update_time < ?)`,
+		    OR (state IN ('NO_MATCH', 'EXPIRED', 'AGREED') AND update_time < ?)`,
 	)
 		.bind(cutoff, cutoff)
 		.all<{ id: string }>();
@@ -167,13 +181,25 @@ export async function runMaintenance(env: Env, now = Date.now()) {
 		result.deleted++;
 	}
 
-	// 3. One email to the starter when nothing worked out.
+	// 3. One email to the starter when nothing worked out. For price decisions, the result email to both people,
+	// which the answer sends itself: only ones that failed are retried here, after a few minutes so a slow
+	// answer isn't emailed twice.
 	const { results: unnotified } = await env.DB.prepare(
-		"SELECT id, stats_ref, starter_email, starter_name, responder_email, offered_until FROM decisions WHERE state IN ('NO_MATCH', 'EXPIRED') AND notified = 0",
-	).all<Row>();
+		`SELECT id, stats_ref, starter_email, starter_name, responder_email, offered_until, kind, state, terms_json, agreed_minor, expire_time
+		 FROM decisions WHERE notified = 0
+		  AND (state IN ('NO_MATCH', 'EXPIRED') OR (kind = 'price' AND state = 'AGREED'))
+		  AND (kind = 'meeting' OR state = 'EXPIRED' OR update_time < ?)`,
+	)
+		.bind(new Date(now - 5 * 60_000).toISOString())
+		.all<NoticeRow>();
 	for (const d of unnotified) {
 		try {
-			await sendEmail(env, { to: d.starter_email, ...(d.responder_email ? await starterEmail(env, d) : noAnswerEmail(d.starter_name)) });
+			await sendEmail(
+				env,
+				d.kind === "price"
+					? await priceNotice(env, d)
+					: { to: d.starter_email, ...(d.responder_email ? await starterEmail(env, d) : noAnswerEmail(d.starter_name)) },
+			);
 			await env.DB.prepare("UPDATE decisions SET notified = 1 WHERE id = ?").bind(d.id).run();
 			result.notified++;
 		} catch (error) {

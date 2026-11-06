@@ -30,6 +30,18 @@ When the health check says the key is refused or missing a permission:
 - `ACCESS_MODE` in `wrangler.jsonc`: `"allowlist"` (only `ALLOWED_EMAILS`) or `"open"` (any verified Google account). Change it in a PR.
 - To add a tester while on the allowlist: update the `ALLOWED_EMAILS` secret (comma-separated) and re-run the deploy. Removing someone takes effect on their next request.
 
+## Price decisions (PRICE_DECISIONS)
+`PRICE_DECISIONS` in `wrangler.jsonc` switches them. Change it in a PR; merging deploys it.
+- `"off"` (the default): `create_decision` takes no `decision.price`, price answers are refused ("Price requests aren't available yet."), and the briefing and every tool (texts and inputs) are exactly as without the feature (checked by `test/tools.test.ts`).
+- `"testers"`: only the emails in `ALLOWED_EMAILS` get `decision.price` in `create_decision`; everyone else gets today's meeting-only version. Anyone holding a code can answer, since the person answering is usually not a tester.
+- `"open"`: everyone can start one.
+
+Switching back to `"off"` while price requests are open: they can't be answered any more and expire after their deadline (the starter gets the usual "nobody answered" email). Nothing else is needed.
+
+Rules and several answers are chosen per request by the starter (`decision.price.rule`, `maxAnswers`); nothing to configure. `RANDOM` draws with `crypto.getRandomValues`.
+
+Check how they're used: D1 Console, `SELECT state, json_extract(terms_json, '$.rule') AS rule, COUNT(*) FROM decisions WHERE kind = 'price' GROUP BY 1, 2`. Amounts are never in the events or logs; the agreed price is kept 7 days, then deleted with the decision.
+
 ## Numbers
 The anonymous usage events identify people by a scrambled ID derived from `COOKIE_ENCRYPTION_KEY`. Replacing that key makes returning people count as new in the stats.
 - Actions → *Stats* → Run workflow: the 14-day funnel (started, answered, matched, accepted, distinct people, requests per assistant). "web" means answered on the browser page; those don't count toward the 1,000 goal.

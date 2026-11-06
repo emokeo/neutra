@@ -131,13 +131,38 @@ export function homePage(connectorUrl: string): Response {
 	);
 }
 
+// The parts of the steps page that depend on what the request is about.
+const REQUEST_TEXTS = {
+	meeting: {
+		heading: "would like to meet you",
+		intro: `Neutra finds a time that works for both of you, <strong>without either of you sharing your calendar</strong>. When it finds one, you both get a calendar invite. No AI on Neutra's side sees your times.`,
+		signIn: "Neutra only uses your name and email from Google sign-in, to send you the invite.",
+		paste: "Paste the line in quotes from the message into your assistant, and add when you're free. That's it. If no time fits, nobody learns anything about the other's times, and you can try again with more times.",
+		browser: "sign in with Google and add the times you're free",
+	},
+	price: {
+		heading: "would like to agree on a price with you",
+		intro: `Neutra checks whether your two numbers overlap, <strong>without either of you seeing the other's number</strong>. If they do, you both get the price halfway between them by email. No AI on Neutra's side sees your number.`,
+		signIn: "Neutra only uses your name and email from Google sign-in, to email you the result.",
+		paste: "Paste the line in quotes from the message into your assistant, with your number. You have one answer, so your assistant reads it back to you before sending. If there's no deal, neither of you learns the other's number.",
+		browser: "sign in with Google and enter your number",
+	},
+};
+
 /** The page behind the link in a hand-off message: what this is and how to answer. */
-export function requestPage(starterName: string | null, connectorUrl: string, decisionId: string, badCode = false): Response {
+export function requestPage(
+	starterName: string | null,
+	connectorUrl: string,
+	decisionId: string,
+	badCode = false,
+	kind: "meeting" | "price" = "meeting",
+): Response {
 	const who = starterName ? starterName.split(/\s+/)[0] : "Someone";
+	const texts = REQUEST_TEXTS[kind];
 	return page(
 		"Neutra · Answer a request",
-		`<h1>${who.replace(/[<>&"']/g, "")} would like to meet you</h1>
-<p>Neutra finds a time that works for both of you, <strong>without either of you sharing your calendar</strong>. When it finds one, you both get a calendar invite. No AI on Neutra's side sees your times.</p>
+		`<h1>${who.replace(/[<>&"']/g, "")} ${texts.heading}</h1>
+<p>${texts.intro}</p>
 
 <h2>1. Add Neutra to your assistant (once, about 2 minutes)</h2>
 <p>Assistants use add-ons called connectors. Neutra's address is ${address(connectorUrl)}.</p>
@@ -145,12 +170,12 @@ export function requestPage(starterName: string | null, connectorUrl: string, de
 <details><summary>ChatGPT</summary><p>Needs Developer mode (Settings → Apps), which not every plan has. Then add the address as a new app and sign in.</p></details>
 <details><summary>Muse</summary><p>Tell Muse in chat: <em>"Add a custom connector: Neutra, remote streamable HTTP, ${connectorUrl}, OAuth."</em> Then sign in. Muse is available in the US, Canada, Japan and Singapore.</p></details>
 <details><summary>Other assistants</summary><p>Any assistant that supports remote MCP connectors with sign-in.</p></details>
-<p>Neutra only uses your name and email from Google sign-in, to send you the invite.</p>
+<p>${texts.signIn}</p>
 
 <h2>2. Paste the line from the message</h2>
-<p>Paste the line in quotes from the message into your assistant, and add when you're free. That's it. If no time fits, nobody learns anything about the other's times, and you can try again with more times.</p>
+<p>${texts.paste}</p>
 <h2 id="browser">No AI assistant?</h2>
-<p>Open the browser link at the end of the message: sign in with Google and add the times you're free. Or paste the code from the message here:</p>
+<p>Open the browser link at the end of the message: ${texts.browser}. Or paste the code from the message here:</p>
 ${badCode ? `<p class="error" role="alert">That code doesn't look complete. Copy the part that starts with "neutra:" from the message.</p>` : ""}
 <form class="codebox" method="get" action="/r/${decisionId}/answer">
 <label for="code" class="sr">Code from the message</label>
@@ -167,7 +192,7 @@ export function privacyPage(): Response {
 	return page(
 		"Neutra · Privacy",
 		`<h1>Privacy</h1>
-<p>Neutra is an early, free project. This page says plainly what it stores and why. Last updated: 5 November 2026.</p>
+<p>Neutra is an early, free project. This page says plainly what it stores and why. Last updated: 6 November 2026.</p>
 
 <h2>Who is responsible</h2>
 <p>Neutra is run by Emoke Olti, Switzerland. Contact: <a href="mailto:${CONTACT}">${CONTACT}</a>.</p>
@@ -177,6 +202,9 @@ export function privacyPage(): Response {
 
 <h2>Your available times</h2>
 <p>Your assistant, or the answer page in your browser, sends the times you're free for one decision. They are never shown to anyone else. The times of the person answering are never stored at all. The starter's times are deleted as soon as the decision is matched or ends, at most 14 days after it started.</p>
+
+<h2>Price limits</h2>
+<p>When two people agree on a price through Neutra, each gives one number: the most they'd pay or the least they'd accept. The answering person's number is never stored. The starting person's number is stored encrypted, with a key only the request code can open, until the request settles or ends, at most 14 days. Neither number is ever shown to the other person; only the agreed price is, or "no deal". The result email goes to both people and shows both names and email addresses, so they can settle the details.</p>
 
 <h2>Decisions</h2>
 <p>For each decision we keep the participants' names and email addresses, its state and, if one was found, the meeting time. <strong>Everything about a decision is deleted 7 days after its meeting ends</strong>, or 7 days after it ended without a meeting. The person who started a decision can delete it earlier at any time, which also cancels the invite.</p>

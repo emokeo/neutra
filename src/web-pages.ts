@@ -1,6 +1,6 @@
-// The web answer page, for people without an AI assistant: sign in with Google, add the times you're free, send.
-// Deliberately bare: one form, plain messages.
-import { MAX_ROWS, type Row } from "./web-form";
+// The web answer page, for people without an AI assistant: sign in with Google, answer, send.
+// Deliberately bare: one form, plain messages. What the form asks depends on the kind of request
+// (web-meeting.ts, web-price.ts); the page around it is the same for all.
 
 export function esc(value: string): string {
 	return value.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
@@ -28,7 +28,7 @@ input { min-height: 44px; font: inherit; font-size: 16px; padding: 0 6px; border
  * sites as a referrer ("same-origin": "no-referrer" would also make browsers send "Origin: null" with the form,
  * which the cross-site check then refuses).
  */
-function shell(title: string, body: string, opts: { status?: number; nonce?: string; script?: string } = {}): Response {
+function shell(title: string, body: string, opts: { status?: number; nonce?: string; script?: string; style?: string } = {}): Response {
 	const html = `<!doctype html>
 <html lang="en">
 <head>
@@ -36,7 +36,7 @@ function shell(title: string, body: string, opts: { status?: number; nonce?: str
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex">
 <title>${esc(title)}</title>
-<style>${STYLE}</style>
+<style>${STYLE}${opts.style ?? ""}</style>
 </head>
 <body>
 ${body}
@@ -56,150 +56,100 @@ ${opts.script && opts.nonce ? `<script nonce="${opts.nonce}">${opts.script}</scr
 	});
 }
 
-export type Invitation = { starterFirstName: string; duration: string; answerBy: string };
+/** The top of every page about a request: "Anna would like to meet you", and "1 hour · answer by Tue 17 Nov". */
+export type Invitation = { title: string; detail: string; answerBy: string };
 
 function heading(r: Invitation): string {
-	return `<h1>${esc(r.starterFirstName)} would like to meet you</h1>
-<p class="muted">${esc(r.duration)} · answer by ${esc(r.answerBy)}</p>`;
+	return `<h1>${esc(r.title)}</h1>
+<p class="muted">${esc(r.detail)} · answer by ${esc(r.answerBy)}</p>`;
 }
 
-/** Before sign-in: what this is, and one button. */
-export function introPage(r: Invitation, token: string, expired = false): Response {
+/** Before sign-in: what this is, and one button. The texts are HTML, already escaped. */
+export function introPage(r: Invitation, token: string, texts: { intro: string; expired?: string; signIn: string }): Response {
 	return shell(
-		`${r.starterFirstName} would like to meet you`,
+		r.title,
 		`${heading(r)}
-${expired ? `<p class="error" role="alert">Your sign-in expired before you sent your times. Sign in again and add them once more.</p>` : ""}
-<p>Add the times you're free. ${esc(r.starterFirstName)} won't see them: if a time fits, you both get one calendar invite.</p>
+${texts.expired ? `<p class="error" role="alert">${texts.expired}</p>` : ""}
+<p>${texts.intro}</p>
 <a class="button" href="/a/${token}/signin">Continue with Google</a>
-<p class="muted">Neutra gets only your name and email from Google, to send you the invite.</p>`,
+<p class="muted">${texts.signIn}</p>`,
 	);
 }
 
-function rowHtml(row: Row, min: string, max: string): string {
-	return `<div class="row">
-<label class="day">Day<input type="date" name="day" value="${esc(row.day)}" min="${min}" max="${max}"></label>
-<label>From<input type="time" name="from" value="${esc(row.from)}"></label>
-<label>To<input type="time" name="to" value="${esc(row.to)}"></label>
-<button type="button" class="rm" aria-label="Remove this time" hidden>×</button>
-</div>`;
+function nonce(): string {
+	return btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(16))));
 }
 
-// Fills in the browser's time zone, adds rows, shows whether the times are enough before sending,
-// and stops a double click from sending two tries.
-const SCRIPT = `(() => {
-  const form = document.getElementById("answer");
-  const zone = form.elements.namedItem("tz");
-  try { if (!zone.value) zone.value = Intl.DateTimeFormat().resolvedOptions().timeZone || ""; } catch (e) {}
-  const add = document.getElementById("add");
-  const rows = document.getElementById("rows");
-  add.hidden = false;
-  rows.querySelectorAll(".rm").forEach((button) => { button.hidden = false; });
-  add.addEventListener("click", () => {
-    if (rows.children.length >= ${MAX_ROWS}) return;
-    const row = rows.lastElementChild.cloneNode(true);
-    row.querySelectorAll("input").forEach((input) => { input.value = ""; });
-    rows.append(row);
-    row.querySelector("input").focus();
-    update();
-  });
-  // Remove a row; the last one is cleared instead, so there's always one to fill in.
-  rows.addEventListener("click", (event) => {
-    const button = event.target.closest(".rm");
-    if (!button) return;
-    const row = button.closest(".row");
-    if (rows.children.length > 1) row.remove();
-    else row.querySelectorAll("input").forEach((input) => { input.value = ""; });
-    update();
-  });
-  // The same rule as Neutra's: only time from an hour from now to 30 days ahead counts, in pieces at
-  // least as long as the meeting, and overlapping or repeated times count once. Times are read in this
-  // browser's time zone, the one the answer is sent with.
-  const meeting = Number(form.dataset.meeting);
-  const status = document.getElementById("enough");
-  const text = (m) => { const h = Math.floor(m / 60), r = Math.round(m % 60); return [h ? h + (h === 1 ? " hour" : " hours") : "", r ? r + " min" : ""].filter(Boolean).join(" ") || "0 min"; };
-  const check = () => {
-    const from0 = Date.now() + 60 * 60 * 1000, to0 = Date.now() + 30 * 24 * 60 * 60 * 1000;
-    const spans = [];
-    let n = 0, problem = "";
-    for (const row of rows.children) {
-      n++;
-      const [day, from, to] = row.querySelectorAll("input");
-      if (!day.value || !from.value || !to.value) continue;
-      const f = from.value.slice(0, 5), t = to.value.slice(0, 5);
-      if (t <= f && t !== "00:00") { problem = problem || "Time " + n + " ends before it starts."; continue; }
-      let start = new Date(day.value + "T" + f).getTime();
-      let end = new Date(day.value + "T" + t).getTime();
-      if (t === "00:00") end += 24 * 60 * 60 * 1000;
-      start = Math.max(start, from0); end = Math.min(end, to0);
-      if (end - start >= meeting * 60 * 1000) spans.push([start, end]);
-    }
-    spans.sort((a, b) => a[0] - b[0]);
-    let total = 0, reach = -Infinity;
-    for (const [start, end] of spans) {
-      if (end <= reach) continue;
-      total += end - Math.max(start, reach);
-      reach = end;
-    }
-    return { total: total / 60000, problem };
-  };
-  const update = () => {
-    const { total, problem } = check();
-    const ok = !problem && total >= 2 * meeting;
-    status.textContent = problem
-      ? problem + " For a time past midnight, add the next day as its own time."
-      : ok
-        ? "Added: " + text(total) + ". Enough to send."
-        : "Added so far: " + text(total) + ". Add at least " + text(2 * meeting) + " in total, each time at least " + text(meeting) + " long and starting an hour from now or later. Times that overlap count once.";
-    status.className = ok ? "muted" : "hint";
-    return ok;
-  };
-  rows.addEventListener("input", update);
-  update();
-  form.addEventListener("submit", (event) => {
-    if (!update()) { event.preventDefault(); status.className = "error"; status.focus(); return; }
-    const send = form.querySelector("[type=submit]");
-    setTimeout(() => { send.disabled = true; send.textContent = "Sending…"; }, 0);
-  });
-})();`;
+/** "Signed in as …": whose answer this is, and where the result goes. */
+function signedInLine(token: string, email: string, addressNote: string): string {
+	return `<p class="muted">Signed in as ${esc(email)}. ${addressNote} <a href="/a/${token}/signin">Use another Google account</a></p>`;
+}
 
-/** The answer form: rows of day, from and to. */
+/** The answer form. The kind of request supplies the inputs (HTML) and anything they need. */
 export function formPage(
 	r: Invitation,
 	p: {
 		token: string;
 		email: string;
-		rows: Row[];
-		timeZone?: string;
-		minDay: string;
-		maxDay: string;
-		minimum: string;
-		meetingMinutes: number;
+		fields: string;
+		attributes?: string;
+		submit?: string;
+		addressNote: string;
+		script?: string;
+		style?: string;
 		notice?: string;
 		error?: string;
 		status?: number;
 	},
 ): Response {
-	const nonce = btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(16))));
-	const empty = { day: "", from: "", to: "" };
-	const rows = p.rows.length ? p.rows : [empty, empty, empty];
 	return shell(
-		`${r.starterFirstName} would like to meet you`,
+		r.title,
 		`${heading(r)}
 ${p.notice ? `<p><strong>${esc(p.notice)}</strong></p>` : ""}
 ${p.error ? `<p class="error" role="alert">${esc(p.error)}</p>` : ""}
-<form id="answer" method="post" action="/a/${p.token}" data-meeting="${Math.round(p.meetingMinutes)}">
-<p>When are you free? Add each time that works, at least ${esc(p.minimum)} in total. ${esc(r.starterFirstName)} won't see your times.</p>
-<div id="rows">
-${rows.map((row) => rowHtml(row, p.minDay, p.maxDay)).join("\n")}
-</div>
-<p class="hint">Past midnight? Add the next day as its own time.</p>
-<button type="button" id="add" hidden>+ Add another time</button>
-<input type="hidden" name="tz" value="${esc(p.timeZone ?? "")}">
-<p id="enough" class="muted" tabindex="-1" aria-live="polite"></p>
-<button type="submit" class="button">Send</button>
-<p class="muted">Signed in as ${esc(p.email)}. The invite goes to this address. <a href="/a/${p.token}/signin">Use another Google account</a></p>
+<form id="answer" method="post" action="/a/${p.token}"${p.attributes ?? ""}>
+${p.fields}
+<button type="submit" class="button">${p.submit ?? "Send"}</button>
+${signedInLine(p.token, p.email, p.addressNote)}
 </form>`,
-		{ nonce, script: SCRIPT, status: p.status },
+		{ nonce: p.script ? nonce() : undefined, script: p.script, status: p.status, style: p.style },
+	);
+}
+
+// The confirm step: the buttons stop working after the first click, so a double click can't send twice.
+const CONFIRM_SCRIPT = `(() => {
+  const form = document.getElementById("answer");
+  form.addEventListener("submit", (event) => {
+    const chosen = event.submitter;
+    setTimeout(() => {
+      form.querySelectorAll("button").forEach((b) => { b.disabled = true; });
+      if (chosen && chosen.value === "send") chosen.textContent = "Sending…";
+    }, 0);
+  });
+})();`;
+
+/**
+ * Before an answer that can't be changed: what will be sent, Send or Change. The value travels in hidden
+ * fields and is read again on Send, so what is sent is exactly what was shown.
+ */
+export function confirmPage(
+	r: Invitation,
+	p: { token: string; email: string; text: string; hidden: Record<string, string>; addressNote: string },
+): Response {
+	const hidden = Object.entries(p.hidden)
+		.map(([name, value]) => `<input type="hidden" name="${esc(name)}" value="${esc(value)}">`)
+		.join("\n");
+	return shell(
+		r.title,
+		`${heading(r)}
+<form id="answer" method="post" action="/a/${p.token}">
+<p><strong>${esc(p.text)}</strong></p>
+${hidden}
+<button type="submit" class="button" name="step" value="send">Send</button>
+<button type="submit" class="secondary" name="step" value="change">Change</button>
+${signedInLine(p.token, p.email, p.addressNote)}
+</form>`,
+		{ nonce: nonce(), script: CONFIRM_SCRIPT, style: ".secondary { display: block; width: 100%; min-height: 44px; border: 1px solid #0f5f5a; border-radius: 12px; background: none; color: #0f5f5a; font: inherit; cursor: pointer; } @media (prefers-color-scheme: dark) { .secondary { color: #6cc4bb; border-color: #6cc4bb; } }" },
 	);
 }
 

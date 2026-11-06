@@ -7,6 +7,9 @@ import { SESSION_COOKIE, sign } from "../src/web-session";
 import { fakeGoogle } from "./fake-calendar";
 import { FakeD1 } from "./fake-d1";
 
+// The steps page records a visit after answering, which needs an execution context.
+const ctx = { waitUntil: () => {}, passThroughOnException: () => {}, props: {} } as unknown as ExecutionContext;
+
 const anna = { email: "anna@example.com", name: "Anna Muster" };
 const ben = { email: "ben@example.com", name: "Ben" };
 const KEY = "test-key";
@@ -214,7 +217,7 @@ describe("web answer page for a price", () => {
 	it("has a steps page that speaks of a price", async () => {
 		const token = await start();
 		const [id] = token.split(".");
-		const html = await (await GoogleHandler.request(`/r/${id}`, {}, env)).text();
+		const html = await (await GoogleHandler.request(`/r/${id}`, {}, env, ctx)).text();
 		expect(html).toContain("Anna would like to agree on a price with you");
 		expect(html).toContain("enter your number");
 		expect(html).not.toContain("add the times you're free");

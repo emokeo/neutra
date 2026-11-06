@@ -121,7 +121,7 @@ describe("starting a price decision", () => {
 		const id = d.name.split("/")[1];
 		expect(d.decision.handoffMessage).toBe(`Anna wants to agree on a price with you through Neutra (neutra.example.dev): Rent for the flat at Seestrasse 12 (utilities included), in CHF per month. You pay; Anna receives.
 
-You each tell Neutra one number in private: you the most you'd pay, Anna the least they'd accept. If your number reaches theirs, the price is halfway between them. You can then each work out the other's number. If not, you both hear only "no deal" and neither learns the other's number. You have one answer, so give your real maximum, not an opening offer. A deal isn't a contract: you two confirm it yourselves.
+You each tell Neutra one number in private: you the most you'd pay, Anna the least they'd accept. If your numbers meet, the price is in the middle of where they meet. You can then each work out the other's number. If not, you both hear only "no deal" and neither learns the other's number. You have one answer, so give your real maximum, not an opening offer. A deal isn't a contract: you two confirm it yourselves.
 
 To answer:
 1. Add Neutra to your AI assistant. In Claude it's in the connector directory: https://claude.ai/directory/connectors/neutra
@@ -138,7 +138,7 @@ Open until Tue 17 Nov.`);
 		if (d.validateOnly) throw new Error("expected a decision");
 		const message = d.decision.handoffMessage as string;
 		expect(message).toContain("Old bike, in EUR. Anna pays; you receive.");
-		expect(message).toContain("you the least you'd accept, Anna the most they'd pay. If your number reaches theirs, the price is halfway between them. You can then each work out the other's number.");
+		expect(message).toContain("you the least you'd accept, Anna the most they'd pay. If your numbers meet, the price is in the middle of where they meet. You can then each work out the other's number.");
 		expect(message).toContain("give your real minimum");
 		expect(message).toContain(`The least I'd accept is EUR ….`);
 		expect(d.receivedLimit).toBe('EUR 120, the most you\'d pay for "Old bike"');
@@ -149,7 +149,7 @@ Open until Tue 17 Nov.`);
 		expect(result).toEqual({
 			validateOnly: true,
 			receivedLimit: 'CHF 1,850.50 per month, the least you\'d accept for "Rent for the flat at Seestrasse 12 (utilities included)"',
-			caution: "If your number reaches theirs, the price is halfway between them. You can then each work out the other's number.",
+			caution: "If your numbers meet, the price is in the middle of where they meet. You can then each work out the other's number.",
 		});
 		expect((db.db.prepare("SELECT COUNT(*) AS n FROM decisions").get() as { n: number }).n).toBe(0);
 		expect((db.db.prepare("SELECT COUNT(*) AS n FROM events").get() as { n: number }).n).toBe(0);
@@ -244,7 +244,7 @@ describe("answering a price request", () => {
 		expect(google.emails).toHaveLength(1);
 		const email = google.emails[0].raw;
 		expect(email).toContain("To: anna@example.com, ben@example.com");
-		expect(email).toContain("You have a deal through Neutra: Rent for the flat at Seestrasse 12 (utilities included) at CHF 1,775 per month (halfway between your numbers).");
+		expect(email).toContain("You have a deal through Neutra: Rent for the flat at Seestrasse 12 (utilities included) at CHF 1,775 per month (the middle of where your numbers met).");
 		expect(email).toContain("not a contract");
 		expect(email).not.toContain("1,700");
 		expect(email).not.toContain("1,850");
@@ -452,7 +452,7 @@ describe("get_decision with a code", () => {
 				currencyCode: "CHF",
 				unit: "per month",
 				rule: "MIDPOINT",
-				ruleText: "If your number reaches theirs, the price is halfway between them. You can then each work out the other's number.",
+				ruleText: "If your numbers meet, the price is in the middle of where they meet. You can then each work out the other's number.",
 				maxAnswers: 1,
 				yourSide: "PAYS",
 			},
@@ -609,12 +609,12 @@ describe("rules", () => {
 	it("MIDPOINT_ROUNDED: halfway to the step, shown to both sides", async () => {
 		const d = await start({ rule: "MIDPOINT_ROUNDED", roundTo: "50" });
 		expect(d.decision.price).toMatchObject({ rule: "MIDPOINT_ROUNDED", roundTo: "50.00" });
-		expect(d.decision.handoffMessage).toContain("halfway between them, rounded to CHF 50.");
+		expect(d.decision.handoffMessage).toContain("in the middle of where they meet, rounded to CHF 50.");
 		const { preview } = await requestPreview(env, ben, d.decision.code as string);
 		expect(preview.price).toMatchObject({ roundTo: "50.00", ruleText: expect.stringContaining("rounded to CHF 50") });
 		const result = await createPriceAnswer(env, ben, { code: d.decision.code as string, price: { maximumToPay: "1851" } });
 		expect(result.decision).toMatchObject({ price: { agreedPriceText: "CHF 1,800 per month" } });
-		expect(google.emails[0].raw).toContain("(halfway, rounded to CHF 50)");
+		expect(google.emails[0].raw).toContain("(the middle of where your numbers met, rounded to CHF 50)");
 	});
 
 	it("MIDPOINT_ROUNDED: without roundTo, a step of about 1% of the starter's number", async () => {

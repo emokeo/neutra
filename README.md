@@ -58,10 +58,10 @@ Two people agree on a price (rent, a sale, a fee) without either seeing the othe
 
 | Rule | Price | What a deal reveals |
 | --- | --- | --- |
-| `MIDPOINT` (default) | halfway | each side can work out the other's number |
+| `MIDPOINT` (default) | the middle of where the numbers meet | each side can work out the other's number |
 | `LOWEST` | the receiver's minimum | the payer learns it; the payer's number stays private |
 | `HIGHEST` | the payer's maximum | the receiver learns it; the receiver's number stays private |
-| `MIDPOINT_ROUNDED` | halfway, rounded to `roundTo` (default about 1% of the starter's number), kept inside the overlap | each side's number only roughly |
+| `MIDPOINT_ROUNDED` | the middle, rounded to `roundTo` (default about 1% of the starter's number), kept inside the overlap | each side's number only roughly |
 | `RANDOM` | a uniform random point in the overlap | only that the other's number is beyond the price |
 | `OVERLAP_ONLY` | none: the result is only "your numbers overlap" or "don't overlap" (salaries, early screening) | nothing: neither number shows |
 

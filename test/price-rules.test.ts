@@ -102,7 +102,7 @@ describe("the rules in plain words", () => {
 	afterEach(() => {});
 	it("say what a deal costs or brings the reader, and whose number it reveals", () => {
 		expect(ruleText(chf("MIDPOINT"), "PAYS", "Anna")).toBe(
-			"If your number reaches theirs, the price is halfway between them. You can then each work out the other's number.",
+			"If your numbers meet, the price is in the middle of where they meet. You can then each work out the other's number.",
 		);
 		expect(ruleText(chf("LOWEST"), "PAYS", "Anna")).toBe(
 			"If your number reaches Anna's, you pay the lowest price you both accept, never more than your number. Anna never learns how high you'd go.",
@@ -117,7 +117,7 @@ describe("the rules in plain words", () => {
 			"If your number reaches Anna's, you get the highest price you both accept, never less than your number. Anna never learns how low you'd go.",
 		);
 		expect(ruleText(chf("MIDPOINT_ROUNDED", 5000), "PAYS", "Anna")).toBe(
-			"If your number reaches theirs, the price is halfway between them, rounded to CHF 50. You can each work out the other's number only roughly.",
+			"If your numbers meet, the price is in the middle of where they meet, rounded to CHF 50. You can each work out the other's number only roughly.",
 		);
 		expect(ruleText(chf("RANDOM"), "RECEIVES", "Anna")).toBe(
 			"If your number reaches theirs, the price is a random point between the two numbers. Each of you learns only that the other's number is beyond the price.",
@@ -125,10 +125,10 @@ describe("the rules in plain words", () => {
 	});
 
 	it("name the rule in results", () => {
-		expect(dealText(chf("MIDPOINT"))).toBe("halfway between your numbers");
+		expect(dealText(chf("MIDPOINT"))).toBe("the middle of where your numbers met");
 		expect(dealText(chf("LOWEST"))).toBe("the lowest price you both accept");
 		expect(dealText(chf("HIGHEST"))).toBe("the highest price you both accept");
-		expect(dealText(chf("MIDPOINT_ROUNDED", 5000))).toBe("halfway, rounded to CHF 50");
+		expect(dealText(chf("MIDPOINT_ROUNDED", 5000))).toBe("the middle of where your numbers met, rounded to CHF 50");
 		expect(dealText(chf("RANDOM"))).toBe("a random point between your numbers");
 	});
 

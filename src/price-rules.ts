@@ -94,7 +94,7 @@ export function ruleText(t: RuleTerms, side: Side, other: string): string {
 	const rule = t.rule;
 	const pays = side === "PAYS";
 	if (rule === "MIDPOINT_ROUNDED") {
-		return `If your number reaches theirs, the price is halfway between them, rounded to ${stepText(t)}. You can each work out the other's number only roughly.`;
+		return `If your numbers meet, the price is in the middle of where they meet, rounded to ${stepText(t)}. You can each work out the other's number only roughly.`;
 	}
 	if (rule === "OVERLAP_ONLY") {
 		return "Neutra only tells you both whether your numbers overlap. No price is set, and neither of you learns the other's number.";
@@ -105,7 +105,8 @@ export function ruleText(t: RuleTerms, side: Side, other: string): string {
 	// Whether the reader's own number becomes the price: LOWEST for the receiver, HIGHEST for the payer.
 	const ownNumberIsPrice = (rule === "LOWEST" && !pays) || (rule === "HIGHEST" && pays);
 	if (rule === "MIDPOINT") {
-		return "If your number reaches theirs, the price is halfway between them. You can then each work out the other's number.";
+		// Said the same for single numbers and ranges: with ranges, "between the two numbers" would be wrong.
+		return "If your numbers meet, the price is in the middle of where they meet. You can then each work out the other's number.";
 	}
 	// Worded for single numbers and ranges alike: "the lowest price you both accept" is the receiver's minimum for
 	// single numbers, and the low end of where two ranges meet.
@@ -130,10 +131,10 @@ export function answersText(maxAnswers: number, side: Side): string {
 export function dealText(t: RuleTerms): string {
 	if (t.rule === "LOWEST") return "the lowest price you both accept";
 	if (t.rule === "HIGHEST") return "the highest price you both accept";
-	if (t.rule === "MIDPOINT_ROUNDED") return `halfway, rounded to ${stepText(t)}`;
+	if (t.rule === "MIDPOINT_ROUNDED") return `the middle of where your numbers met, rounded to ${stepText(t)}`;
 	if (t.rule === "RANDOM") return "a random point between your numbers";
 	if (t.rule === "OVERLAP_ONLY") return "no price set: your numbers overlap";
-	return "halfway between your numbers";
+	return "the middle of where your numbers met";
 }
 
 /** "CHF 50": the MIDPOINT_ROUNDED step. */

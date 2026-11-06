@@ -85,12 +85,32 @@ function subject(info: WebRequest): string {
 	return `${t.subject}${t.details ? ` (${t.details})` : ""}`;
 }
 
-/** What to give, how the rule works and how many answers there are: the person must know all three before answering. */
+/** Answers this person still has: all of them before a try, fewer after a no-deal. */
+function answersLeft(info: WebRequest): number {
+	return info.viewer === "responder" ? info.remainingAttempts : terms(info).maxAnswers;
+}
+
+/** "You have 2 answers." or, after a try, "You have 1 answer left." */
+function answersLine(info: WebRequest): string {
+	const left = answersLeft(info);
+	if (left < terms(info).maxAnswers) return `You have ${left} ${left === 1 ? "answer" : "answers"} left.`;
+	return left === 1 ? "You have one answer." : `You have ${left} answers.`;
+}
+
+/**
+ * What to give, how the rule works and how many answers there are: the person must know all three before answering.
+ * The subject isn't repeated in the sentence: it is in the line under the heading.
+ */
+/** The subject on its own line, under a result: never pasted into a sentence, where its capital letter reads oddly. */
+function subjectLine(info: WebRequest): string {
+	const t = terms(info);
+	return `<p class="muted">${esc(t.subject)}${t.details ? ` (${esc(t.details)})` : ""}</p>`;
+}
+
 function introText(info: WebRequest): string {
 	const t = terms(info);
-	const answers = t.maxAnswers === 1 ? "You have one answer." : `You have ${t.maxAnswers} answers.`;
 	const noDeal = t.rule === "OVERLAP_ONLY" ? "" : " If not, neither of you learns the other's number.";
-	return `Give ${pays(info) ? "the most you'd pay" : "the least you'd accept"} for ${esc(t.subject)}. ${esc(t.ruleText)}${noDeal} ${answers}`;
+	return `Give ${pays(info) ? "the most you'd pay" : "the least you'd accept"}. ${esc(t.ruleText)}${noDeal} ${answersLine(info)}`;
 }
 
 const STYLE = `
@@ -125,7 +145,10 @@ export const priceKind: AnswerKind<PriceAnswer, PriceValues> = {
 			fields: `<p>${introText(info)}</p>
 <label class="big" for="amount">${label(info)}</label>
 <div class="amount"><span>${esc(t.currency)}</span><input id="amount" name="amount" inputmode="decimal" autocomplete="off" required value="${esc(values?.amount ?? "")}">${t.unit ? `<span>${esc(t.unit)}</span>` : ""}</div>
-<p class="hint">${esc(answersText(t.maxAnswers, t.yourSide))} You can't change a number after sending it.</p>
+<p class="hint">A range like 1700–1900 works too.</p>
+<p class="hint">${esc(
+				answersLeft(info) < t.maxAnswers ? `${answersLine(info)} After a "no deal" you can send another number.` : answersText(t.maxAnswers, t.yourSide),
+			)} You can't change a number after sending it.</p>
 <input type="hidden" name="step" value="confirm">`,
 			submit: "Continue",
 			style: STYLE,
@@ -181,18 +204,19 @@ export const priceKind: AnswerKind<PriceAnswer, PriceValues> = {
 		if (info.state === "AGREED" && terms(info).rule === "OVERLAP_ONLY") {
 			return messagePage(
 				"Your numbers overlap",
-				`<p><strong>Your numbers overlap for ${esc(terms(info).subject)}: worth talking.</strong></p><p>Neutra set no price; agree on it together with ${who(info)}. Neither of you learns the other's number. You both got an email.</p>`,
+				`<p><strong>Your numbers overlap: worth talking.</strong></p>${subjectLine(info)}<p>Neutra set no price; agree on it together with ${who(info)}. Neither of you learns the other's number. You both got an email.</p>`,
 			);
 		}
 		if (info.state === "NO_MATCH" && terms(info).rule === "OVERLAP_ONLY") {
-			return messagePage("Your numbers don't overlap", `<p>Your numbers don't overlap for ${esc(terms(info).subject)}. Neither of you learns the other's number.</p>`);
+			return messagePage(
+				"Your numbers don't overlap",
+				`<p><strong>Your numbers don't overlap.</strong></p>${subjectLine(info)}<p>Neither of you learns the other's number.</p>`,
+			);
 		}
 		if (info.state === "AGREED" && info.agreedPriceText) {
 			return messagePage(
 				"You have a deal",
-				`<p><strong>Deal: ${esc(info.agreedPriceText)} for ${esc(terms(info).subject)}.</strong></p><p>${
-					terms(info).rule === "MIDPOINT" ? "That's halfway between your two numbers." : `That's ${esc(terms(info).dealText)}.`
-				} This isn't a contract: settle the details with ${who(info)} directly; you both got an email.</p>`,
+				`<p><strong>Deal: ${esc(info.agreedPriceText)}</strong></p>${subjectLine(info)}<p>That's ${esc(terms(info).dealText)}. This isn't a contract: settle the details with ${who(info)} directly; you both got an email.</p>`,
 			);
 		}
 		if (info.state === "NO_MATCH") {

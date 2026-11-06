@@ -117,7 +117,8 @@ describe("web answer page for a price", () => {
 		const html = await (await get(`/a/${token}`)).text();
 		expect(html).toContain("<h1>Anna would like to agree on a price with you</h1>");
 		expect(html).toContain("Rent for the flat (utilities included) · answer by Tue 17 Nov");
-		expect(html).toContain("Give the most you'd pay for Rent for the flat.");
+		// The subject is in the line under the heading, not pasted into the sentence.
+		expect(html).toContain("Give the most you'd pay. If your numbers meet, the price is in the middle of where they meet.");
 		expect(html).toContain("to email you the result");
 		expect(html).not.toContain("1700");
 	});
@@ -128,6 +129,7 @@ describe("web answer page for a price", () => {
 		expect(html).toContain(`<label class="big" for="amount">The most you'd pay</label>`);
 		expect(html).toContain('<span>CHF</span><input id="amount" name="amount" inputmode="decimal"');
 		expect(html).toContain("<span>per month</span>");
+		expect(html).toContain("A range like 1700–1900 works too.");
 		expect(html).toContain('<input type="hidden" name="step" value="confirm">');
 		expect(html).toContain("The result goes to this address.");
 		expect(html).not.toContain('name="day"');
@@ -198,7 +200,7 @@ describe("web answer page for a price", () => {
 		const html = await (await get(`/a/${token}`, cookie)).text();
 		expect(html).toContain("You have a deal");
 		expect(html).toContain(
-			"Deal: CHF 1,775 per month for Rent for the flat.</strong></p><p>That's halfway between your two numbers. This isn't a contract: settle the details with Anna directly; you both got an email.",
+			'Deal: CHF 1,775 per month</strong></p><p class="muted">Rent for the flat (utilities included)</p><p>That\'s the middle of where your numbers met. This isn\'t a contract: settle the details with Anna directly; you both got an email.',
 		);
 		expect(google.emails).toHaveLength(1);
 
@@ -259,9 +261,12 @@ describe("web answer page for a price", () => {
 		const again = await (await get(`/a/${token}`, cookie)).text();
 		expect(again).toContain("No deal yet: your number didn&#39;t reach theirs. 1 answer left.");
 		expect(again).toContain('name="amount"');
+		// After a try, every count on the page is the one left.
+		expect(again).toContain("You have 1 answer left.");
+		expect(again).not.toContain("You have 2 answers");
 		await post(`/a/${token}`, cookie, [["amount", "1800"], ["step", "send"]]);
 		const result = await (await get(`/a/${token}`, cookie)).text();
-		expect(result).toContain("Deal: CHF 1,700 per month for Rent for the flat.");
+		expect(result).toContain('Deal: CHF 1,700 per month</strong></p><p class="muted">Rent for the flat</p>');
 		expect(result).toContain("That's the lowest price you both accept.");
 	});
 
@@ -277,7 +282,7 @@ describe("web answer page for a price", () => {
 		expect(form).toContain("Neutra only tells you both whether your numbers overlap.");
 		await post(`/a/${token}`, cookie, [["amount", "110000"], ["step", "send"]]);
 		const result = await (await get(`/a/${token}`, cookie)).text();
-		expect(result).toContain("Your numbers overlap for Salary for the role: worth talking.");
+		expect(result).toContain('Your numbers overlap: worth talking.</strong></p><p class="muted">Salary for the role</p>');
 		expect(result).not.toMatch(/120,000|110,000|120000|110000/);
 	});
 

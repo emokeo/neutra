@@ -147,7 +147,11 @@ export const priceKind: AnswerKind<PriceAnswer, PriceValues> = {
 <div class="amount"><span>${esc(t.currency)}</span><input id="amount" name="amount" inputmode="decimal" autocomplete="off" required value="${esc(values?.amount ?? "")}">${t.unit ? `<span>${esc(t.unit)}</span>` : ""}</div>
 <p class="hint">A range like 1700–1900 works too.</p>
 <p class="hint">${esc(
-				answersLeft(info) < t.maxAnswers ? `${answersLine(info)} After a "no deal" you can send another number.` : answersText(t.maxAnswers, t.yourSide),
+				answersLeft(info) < t.maxAnswers
+					? answersLeft(info) === 1
+						? "This is your last answer."
+						: `${answersLine(info)} After a "no deal" you can send another number.`
+					: answersText(t.maxAnswers, t.yourSide),
 			)} You can't change a number after sending it.</p>
 <input type="hidden" name="step" value="confirm">`,
 			submit: "Continue",

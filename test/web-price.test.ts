@@ -264,6 +264,8 @@ describe("web answer page for a price", () => {
 		// After a try, every count on the page is the one left.
 		expect(again).toContain("You have 1 answer left.");
 		expect(again).not.toContain("You have 2 answers");
+		expect(again).toContain("This is your last answer.");
+		expect(again).not.toContain("you can send another number");
 		await post(`/a/${token}`, cookie, [["amount", "1800"], ["step", "send"]]);
 		const result = await (await get(`/a/${token}`, cookie)).text();
 		expect(result).toContain('Deal: CHF 1,700 per month</strong></p><p class="muted">Rent for the flat</p>');

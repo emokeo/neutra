@@ -3,6 +3,7 @@ import { createEvent, deleteEvent, eventExists, getReplies, newEventId, type Inv
 import { recordEvent } from "./events";
 import { checkCreateAnswer, checkCreateDecision } from "./limits";
 import { formatDay, formatRange, isValidTimeZone, parseTimestamp } from "./time";
+import { CLAUDE_DIRECTORY_URL } from "./links";
 import { durationText } from "./web-form";
 
 export type Caller = { email: string; name: string; client?: string };
@@ -157,7 +158,8 @@ export function handoffMessage(p: {
 	return `${p.starterName} wants to find a time to meet you with Neutra (${host}). Neither of you shares your calendar: each assistant tells Neutra only when you're free, and if a time fits both of you, you both get a Google Calendar invite from neutra.invites@gmail.com.
 
 To answer (one-time setup, about 2 minutes):
-1. Add Neutra to your AI assistant as a custom connector (it isn't in connector directories yet): ${p.connectorUrl}
+1. Add Neutra to your AI assistant. In Claude it's in the connector directory: ${CLAUDE_DIRECTORY_URL}
+Other assistants: add ${p.connectorUrl} as a custom connector.
 You sign in with Google; Neutra gets only your name and email. Steps for Claude, ChatGPT and others: ${home}/r/${p.decisionId}
 2. Tell your assistant: "Answer Neutra request ${combinedCode(p.decisionId, p.code)}. I'm free: …"
 

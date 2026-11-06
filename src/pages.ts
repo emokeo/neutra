@@ -1,3 +1,4 @@
+import { CLAUDE_DIRECTORY_URL } from "./links";
 // The two public pages Google's sign-in setup asks for: a home page and a privacy policy.
 
 const CONTACT = "neutra.invites@gmail.com";
@@ -119,8 +120,8 @@ export function homePage(connectorUrl: string): Response {
 </ul>
 
 <h2 id="add">Add Neutra to your assistant (once, about 2 minutes)</h2>
-<p>Assistants use add-ons called connectors. Neutra's address is ${address(connectorUrl)}; it isn't in connector directories yet, so you add it by hand:</p>
-<details><summary>Claude</summary><p>Customize → Connectors → Add custom connector → paste the address → Add → sign in with Google. If your phone app can't add it, add it once on claude.ai; it then works in the app too.</p></details>
+<p>Assistants use add-ons called connectors. Neutra's address is ${address(connectorUrl)}.</p>
+<details open><summary>Claude</summary><p>Neutra is in Claude's connector directory: <a href="${CLAUDE_DIRECTORY_URL}">open Neutra there</a> → Connect → sign in with Google. If your phone app can't add it, add it once on claude.ai; it then works in the app too.</p></details>
 <details><summary>ChatGPT</summary><p>Needs Developer mode (Settings → Apps), which not every plan has. Then add the address as a new app and sign in.</p></details>
 <details><summary>Muse</summary><p>Tell Muse in chat: <em>"Add a custom connector: Neutra, remote streamable HTTP, ${connectorUrl}, OAuth."</em> Then sign in. Muse is available in the US, Canada, Japan and Singapore.</p></details>
 <details><summary>Other assistants</summary><p>Any assistant that supports remote MCP connectors with sign-in.</p></details>
@@ -139,8 +140,8 @@ export function requestPage(starterName: string | null, connectorUrl: string, de
 <p>Neutra finds a time that works for both of you, <strong>without either of you sharing your calendar</strong>. When it finds one, you both get a calendar invite. No AI on Neutra's side sees your times.</p>
 
 <h2>1. Add Neutra to your assistant (once, about 2 minutes)</h2>
-<p>Assistants use add-ons called connectors. Neutra's address is ${address(connectorUrl)}; it isn't in connector directories yet, so you add it by hand:</p>
-<details><summary>Claude</summary><p>Customize → Connectors → Add custom connector → paste the address → Add → sign in with Google. If your phone app can't add it, add it once on claude.ai; it then works in the app too.</p></details>
+<p>Assistants use add-ons called connectors. Neutra's address is ${address(connectorUrl)}.</p>
+<details open><summary>Claude</summary><p>Neutra is in Claude's connector directory: <a href="${CLAUDE_DIRECTORY_URL}">open Neutra there</a> → Connect → sign in with Google. If your phone app can't add it, add it once on claude.ai; it then works in the app too.</p></details>
 <details><summary>ChatGPT</summary><p>Needs Developer mode (Settings → Apps), which not every plan has. Then add the address as a new app and sign in.</p></details>
 <details><summary>Muse</summary><p>Tell Muse in chat: <em>"Add a custom connector: Neutra, remote streamable HTTP, ${connectorUrl}, OAuth."</em> Then sign in. Muse is available in the US, Canada, Japan and Singapore.</p></details>
 <details><summary>Other assistants</summary><p>Any assistant that supports remote MCP connectors with sign-in.</p></details>
